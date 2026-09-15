@@ -1,0 +1,35 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    match /stores/{storeId} {
+      // Anyone can read store profiles — needed for the public directory
+      // and public storefronts (customers aren't logged in).
+      allow read: if true;
+
+      // A seller can only create/edit their OWN store document (doc id ==
+      // their Firebase Auth uid). The Super Admin account can edit any
+      // store — that's how plan activation / blocking / trial extension
+      // works. Update this email if you ever change the Super Admin login.
+      allow create: if request.auth != null && request.auth.uid == storeId;
+      allow update: if request.auth != null &&
+        (request.auth.uid == storeId || request.auth.token.email == "sumitart2018@gmail.com");
+      allow delete: if false;
+
+      match /products/{productId} {
+        // Public storefronts need to read products without logging in.
+        allow read: if true;
+        // Only that store's own owner can add/edit/delete their products.
+        allow write: if request.auth != null && request.auth.uid == storeId;
+      }
+
+      match /orders/{orderId} {
+        // Checkout is anonymous (customers never log in) — anyone can
+        // CREATE an order, but only the store owner can read/update/delete
+        // (e.g. marking an order as shipped, or viewing the orders list).
+        allow create: if true;
+        allow read, update, delete: if request.auth != null && request.auth.uid == storeId;
+      }
+    }
+  }
+}
