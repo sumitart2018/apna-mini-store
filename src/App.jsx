@@ -277,7 +277,6 @@ export default function App() {
     const onErr = (source) => (err) => { setLoadError({ err, source }); setLoading(false); };
     const unsubStores = watchAllStores((data) => { setStoreProfiles(data); setLoading(false); }, onErr("stores"));
     const unsubProducts = watchAllProducts(setProductsByStore, onErr("products"));
-    const unsubOrders = watchAllOrders(setOrdersByStore, onErr("orders"));
     const unsubAuth = watchAuthState(setAuthUser);
     // Safety net: if Firestore never calls back at all (wrong project ID,
     // network block, etc.) — neither success nor error — don't hang on
@@ -288,8 +287,18 @@ export default function App() {
         return stillLoading;
       });
     }, 10000);
-    return () => { unsubStores(); unsubProducts(); unsubOrders(); unsubAuth(); clearTimeout(timeout); };
+    return () => { unsubStores(); unsubProducts(); unsubAuth(); clearTimeout(timeout); };
   }, []);
+
+  useEffect(() => {
+    if (authUser === undefined) return;
+    if (!authUser) {
+      setOrdersByStore({});
+      return;
+    }
+    const unsubOrders = watchAllOrders(setOrdersByStore, (err) => { setLoadError({ err, source: "orders" }); setLoading(false); });
+    return () => unsubOrders();
+  }, [authUser]);
 
   // authUser is a real, persisted Firebase Auth session — it survives page
   // reloads on its own, unlike the old in-memory-only `session` state. The
