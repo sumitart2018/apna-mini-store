@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef, useMemo } from "react";
-import { ShoppingCart, MessageCircle, Palette, Package, QrCode, BarChart3, ShieldCheck, Smartphone, Users, Boxes, Search, Zap, Menu, X, Facebook, Instagram, Youtube, Heart, Truck, Headphones, User, Phone, MapPin, FileText, Mail, Twitter, ShoppingBag, Shirt, Coffee, KeyRound, Grid3x3, Share2, SlidersHorizontal, Home, Award, Star, ExternalLink, Globe, UtensilsCrossed, Moon, Sun, Sparkles, TrendingUp, Flame, Bell, LogOut, Filter, ArrowUpDown, ChevronLeft, ChevronRight, Store, Ban, CalendarDays, Clock, Hash, TrendingDown, Copy, Lock, Eye, EyeOff } from "lucide-react";
+import { ShoppingCart, MessageCircle, Palette, Package, QrCode, BarChart3, ShieldCheck, Smartphone, Users, Boxes, Search, Zap, Menu, X, Facebook, Instagram, Youtube, Heart, Truck, Headphones, User, Phone, MapPin, FileText, Mail, Twitter, ShoppingBag, Shirt, Coffee, KeyRound, Grid3x3, Share2, SlidersHorizontal, Home, Award, Star, ExternalLink, Globe, UtensilsCrossed, Moon, Sun, Sparkles, TrendingUp, Flame, Bell, LogOut, Filter, ArrowUpDown, ChevronLeft, ChevronRight, Store, Ban, CalendarDays, Clock, Hash, TrendingDown, Copy, Lock, Eye, EyeOff, Loader2 } from "lucide-react";
 import {
   watchAllStores, watchAllProducts, watchAllOrders, watchAuthState,
   signUpSeller, signInSeller, signOutUser, friendlyAuthError,
@@ -269,7 +269,21 @@ function Toast({ msg }) {
   if (!msg) return null;
   return (
     <>
-      <style>{`@keyframes sadsToastIn { from { opacity: 0; transform: translate(-50%, 12px); } to { opacity: 1; transform: translate(-50%, 0); } }`}</style>
+      <style>{`
+@keyframes sadsToastIn {
+  from { opacity: 0; transform: translate(-50%, 12px); }
+  to { opacity: 1; transform: translate(-50%, 0); }
+}
+
+@keyframes spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+`}</style>
       <div style={{ position: "fixed", bottom: 20, left: "50%", transform: "translateX(-50%)", background: T.ink, color: T.paper, padding: "10px 18px", borderRadius: 10, fontFamily: "Inter", fontSize: 14, fontWeight: 600, zIndex: 999, boxShadow: "0 6px 20px rgba(0,0,0,0.25)", animation: "sadsToastIn 0.25s ease" }}>
         {msg}
       </div>
@@ -1448,7 +1462,26 @@ function LoginForm({ onSubmit, onSignup }) {
     }
   }}
 >
-  {loading ? "Logging in..." : "Login →"}
+  {loading ? (
+  <span
+    style={{
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "center",
+      gap: 8,
+    }}
+  >
+    <Loader2
+      size={18}
+      style={{
+        animation: "spin 1s linear infinite",
+      }}
+    />
+    Logging in...
+  </span>
+) : (
+  "Login →"
+)}
 </Button>
       <p style={{ textAlign: "center", fontSize: 13, marginTop: 14, color: T.ink }}>
         Naya store banana hai? <button style={{ color: T.magenta, cursor: "pointer", fontWeight: 600, background: "transparent", border: "none", padding: 0, font: "inherit" }} onClick={onSignup}>Signup karo</button>
