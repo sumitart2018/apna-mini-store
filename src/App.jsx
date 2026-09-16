@@ -1449,6 +1449,23 @@ function LoginForm({ onSubmit, onSignup }) {
     <AuthCard title="Seller Login">
       <Field label="Email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} />
       <Field label="Password" type="password" value={password} onChange={(e) => setPassword(e.target.value)} />
+      <div style={{ textAlign: "right", marginTop: 6, marginBottom: 12 }}>
+  <button
+    type="button"
+    onClick={() => alert("Forgot Password feature coming next")}
+    style={{
+      background: "none",
+      border: "none",
+      color: T.magenta,
+      cursor: "pointer",
+      fontSize: 13,
+      fontWeight: 600,
+      padding: 0
+    }}
+  >
+    Forgot Password?
+  </button>
+</div>
       <p style={{ fontSize: 12, color: T.ink, opacity: 0.6, marginTop: -6 }}>Demo: owner@demo.com / demo123 (Yuvi Fashion sample store)</p>
       <Button
   style={{ width: "100%" }}
