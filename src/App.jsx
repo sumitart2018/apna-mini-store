@@ -202,20 +202,68 @@ function Button({ children, onClick, variant = "primary", style, type = "button"
 
 function Field({ label, ...props }) {
   const [showPassword, setShowPassword] = useState(false);
+
   return (
     <label style={{ display: "block", marginBottom: 14 }}>
-      <span style={{ fontFamily: "Inter", fontWeight: 600, fontSize: 13, color: T.ink, opacity: 0.75 }}>{label}</span>
-      <input
-  {...props}
-  type={
-    props.type === "password"
-      ? (showPassword ? "text" : "password")
-      : props.type
-  }
-  style={{ display: "block", width: "100%", marginTop: 6, padding: "10px 12px", borderRadius: 8, border: `2px solid ${T.ink}22`, fontFamily: "Inter", fontSize: 15, background: T.cream, boxSizing: "border-box", outline: "none" }} />
+      <span
+        style={{
+          fontFamily: "Inter",
+          fontWeight: 600,
+          fontSize: 13,
+          color: T.ink,
+          opacity: 0.75
+        }}
+      >
+        {label}
+      </span>
+
+      <div style={{ position: "relative" }}>
+        <input
+          {...props}
+          type={
+            props.type === "password"
+              ? (showPassword ? "text" : "password")
+              : props.type
+          }
+          style={{
+            display: "block",
+            width: "100%",
+            marginTop: 6,
+            padding: "10px 40px 10px 12px",
+            borderRadius: 8,
+            border: `2px solid ${T.ink}22`,
+            fontFamily: "Inter",
+            fontSize: 15,
+            background: T.cream,
+            boxSizing: "border-box",
+            outline: "none"
+          }}
+        />
+
+        {props.type === "password" && (
+          <button
+            type="button"
+            onClick={() => setShowPassword(!showPassword)}
+            style={{
+              position: "absolute",
+              right: 10,
+              top: "50%",
+              transform: "translateY(-50%)",
+              border: "none",
+              background: "transparent",
+              cursor: "pointer",
+              fontSize: 18,
+              padding: 0
+            }}
+          >
+            {showPassword ? "🙈" : "👁️"}
+          </button>
+        )}
+      </div>
     </label>
   );
 }
+  
 
 function Toast({ msg }) {
   if (!msg) return null;
