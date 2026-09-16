@@ -1430,12 +1430,26 @@ function SignupForm({ onSubmit, onLogin }) {
 function LoginForm({ onSubmit, onSignup }) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [loading, setLoading] = useState(false);
   return (
     <AuthCard title="Seller Login">
       <Field label="Email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} />
       <Field label="Password" type="password" value={password} onChange={(e) => setPassword(e.target.value)} />
       <p style={{ fontSize: 12, color: T.ink, opacity: 0.6, marginTop: -6 }}>Demo: owner@demo.com / demo123 (Yuvi Fashion sample store)</p>
-      <Button style={{ width: "100%" }} onClick={() => onSubmit(email, password)}>Login →</Button>
+      <Button
+  style={{ width: "100%" }}
+  disabled={loading}
+  onClick={async () => {
+    setLoading(true);
+    try {
+      await onSubmit(email, password);
+    } finally {
+      setLoading(false);
+    }
+  }}
+>
+  {loading ? "Logging in..." : "Login →"}
+</Button>
       <p style={{ textAlign: "center", fontSize: 13, marginTop: 14, color: T.ink }}>
         Naya store banana hai? <button style={{ color: T.magenta, cursor: "pointer", fontWeight: 600, background: "transparent", border: "none", padding: 0, font: "inherit" }} onClick={onSignup}>Signup karo</button>
       </p>
