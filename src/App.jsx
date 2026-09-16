@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef, useMemo } from "react";
-import { ShoppingCart, MessageCircle, Palette, Package, QrCode, BarChart3, ShieldCheck, Smartphone, Users, Boxes, Search, Zap, Menu, X, Facebook, Instagram, Youtube, Heart, Truck, Headphones, User, Phone, MapPin, FileText, Mail, Twitter, ShoppingBag, Shirt, Coffee, KeyRound, Grid3x3, Share2, SlidersHorizontal, Home, Award, Star, ExternalLink, Globe, UtensilsCrossed, Eye, Moon, Sun, Sparkles, TrendingUp, Flame, Bell, LogOut, Filter, ArrowUpDown, ChevronLeft, ChevronRight, Store, Ban, CalendarDays, Clock, Hash, TrendingDown, Copy, Lock } from "lucide-react";
+import { ShoppingCart, MessageCircle, Palette, Package, QrCode, BarChart3, ShieldCheck, Smartphone, Users, Boxes, Search, Zap, Menu, X, Facebook, Instagram, Youtube, Heart, Truck, Headphones, User, Phone, MapPin, FileText, Mail, Twitter, ShoppingBag, Shirt, Coffee, KeyRound, Grid3x3, Share2, SlidersHorizontal, Home, Award, Star, ExternalLink, Globe, UtensilsCrossed, Moon, Sun, Sparkles, TrendingUp, Flame, Bell, LogOut, Filter, ArrowUpDown, ChevronLeft, ChevronRight, Store, Ban, CalendarDays, Clock, Hash, TrendingDown, Copy, Lock, Eye, EyeOff } from "lucide-react";
 import {
   watchAllStores, watchAllProducts, watchAllOrders, watchAuthState,
   signUpSeller, signInSeller, signOutUser, friendlyAuthError,
