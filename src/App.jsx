@@ -1452,7 +1452,19 @@ function LoginForm({ onSubmit, onSignup }) {
       <div style={{ textAlign: "right", marginTop: 6, marginBottom: 12 }}>
   <button
     type="button"
-    onClick={() => alert("Forgot Password feature coming next")}
+    onClick={async () => {
+  if (!email.trim()) {
+    alert("Please enter your email first.");
+    return;
+  }
+
+  try {
+    await resetSellerPassword(email);
+    alert("Password reset email sent successfully.");
+  } catch (err) {
+    alert(err.message || "Failed to send password reset email.");
+  }
+}}
     style={{
       background: "none",
       border: "none",
