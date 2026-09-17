@@ -16,6 +16,8 @@
 import {
   createUserWithEmailAndPassword,
   signInWithEmailAndPassword,
+  signInWithPopup,
+  GoogleAuthProvider,
   signOut as firebaseSignOut,
   onAuthStateChanged,
   sendPasswordResetEmail,
@@ -36,7 +38,7 @@ import {
   orderBy as fsOrderBy,
 } from "firebase/firestore";
 import { ref, uploadBytes, getDownloadURL, deleteObject } from "firebase/storage";
-import { auth, db, storage } from "./firebase";
+import { auth, db, storage, googleProvider } from "./firebase";
 
 // ---------- Auth ----------
 
@@ -75,6 +77,11 @@ export async function signUpSeller(email, password, profileFields) {
 
 export async function signInSeller(email, password) {
   const cred = await signInWithEmailAndPassword(auth, email.trim(), password);
+  return cred.user.uid;
+}
+
+export async function signInWithGoogle() {
+  const cred = await signInWithPopup(auth, googleProvider);
   return cred.user.uid;
 }
 
