@@ -429,6 +429,15 @@ export default function App() {
     }
   };
 
+  const googleLogin = async () => {
+  try {
+    await signInWithGoogle();
+    setView("dashboard");
+  } catch (e) {
+    flash(friendlyAuthError(e));
+  }
+};
+
   const updateOwnerStore = async (patch) => {
     setSaveState("saving");
     try {
@@ -609,7 +618,13 @@ export default function App() {
 
       {view === "directory" && <Directory stores={stores} onOpen={openStore} onCreate={() => setView("signup")} onLogin={() => setView("login")} onSuperAdmin={() => setView("superadmin-login")} />}
       {view === "signup" && <SignupForm onSubmit={createStore} onLogin={() => setView("login")} />}
-      {view === "login" && <LoginForm onSubmit={login} onSignup={() => setView("signup")} />}
+      {view === "login" && (
+  <LoginForm
+    onSubmit={login}
+    onSignup={() => setView("signup")}
+    onGoogleLogin={googleLogin}
+  />
+)}
       {view === "superadmin-login" && <SuperAdminLogin onSubmit={superAdminLogin} onBack={() => setView("directory")} />}
       {view === "superadmin" && isSuperAdmin && (
         <SuperAdminDashboard stores={stores} onActivate={activatePlan} onBlock={toggleBlockStore} onExtendTrial={extendTrial} onLogout={() => { signOutUser(); setView("directory"); }} onResetPassword={sendResetEmail} />
@@ -1441,7 +1456,7 @@ function SignupForm({ onSubmit, onLogin }) {
   );
 }
 
-function LoginForm({ onSubmit, onSignup }) {
+function LoginForm({ onSubmit, onSignup, onGoogleLogin }) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
@@ -1533,14 +1548,7 @@ function LoginForm({ onSubmit, onSignup }) {
     justifyContent: "center",
     gap: 10,
   }}
-  onClick={async () => {
-    try {
-      await signInWithGoogle();
-      alert("Google Login Successful");
-    } catch (err) {
-      alert(err.message);
-    }
-  }}
+  onClick={onGoogleLogin}
 >
   <img
     src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg"
