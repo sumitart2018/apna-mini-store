@@ -6,7 +6,7 @@ import {
   updateStoreProfile, addStoreCategory, removeStoreCategory,
   setStorePlan, setStoreBlocked, setTrialStartedAt,
   createProduct, editProduct, removeProduct,
-  createOrder, setOrderStatus, uploadStoreImage, resetSellerPassword,
+  createOrder, setOrderStatus, uploadStoreImage, resetSellerPassword, signInWithGoogle
 } from "./firestoreApi";
 
 /*
@@ -1511,6 +1511,44 @@ function LoginForm({ onSubmit, onSignup }) {
 ) : (
   "Login →"
 )}
+</Button>
+      <div
+  style={{
+    textAlign: "center",
+    margin: "16px 0",
+    color: "#888",
+    fontSize: 13,
+    fontWeight: 600,
+  }}
+>
+  ───── OR ─────
+</div>
+
+<Button
+  variant="ghost"
+  style={{
+    width: "100%",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 10,
+  }}
+  onClick={async () => {
+    try {
+      await signInWithGoogle();
+      alert("Google Login Successful");
+    } catch (err) {
+      alert(err.message);
+    }
+  }}
+>
+  <img
+    src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg"
+    alt="Google"
+    width="20"
+    height="20"
+  />
+  Continue with Google
 </Button>
       <p style={{ textAlign: "center", fontSize: 13, marginTop: 14, color: T.ink }}>
         Naya store banana hai? <button style={{ color: T.magenta, cursor: "pointer", fontWeight: 600, background: "transparent", border: "none", padding: 0, font: "inherit" }} onClick={onSignup}>Signup karo</button>
