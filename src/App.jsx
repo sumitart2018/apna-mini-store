@@ -1640,30 +1640,32 @@ function Dashboard({ store, onAddProduct, onUpdateProduct, onDeleteProduct, onAd
     }}
   >
     <Button
-      variant="ghost"
-      onClick={() => {
-        navigator.clipboard.writeText(
-          `${window.location.origin}/store/${store.slug}`
-        );
-        alert("✅ Store Link Copied");
-      }}
-    >
-      📋 Copy Link
-    </Button>
+  variant="ghost"
+  onClick={() => {
+    const storeLink = `${window.location.origin}/?store=${store.id}`;
+
+    navigator.clipboard.writeText(storeLink);
+    alert("✅ Store Link Copied");
+  }}
+>
+  📋 Copy Link
+</Button>
 
     <Button
-      variant="mint"
-      onClick={() => {
-        window.open(
-          `https://wa.me/?text=${encodeURIComponent(
-            `🛍️ Visit my online store\n${window.location.origin}/store/${store.slug}`
-          )}`,
-          "_blank"
-        );
-      }}
-    >
-      📤 Share
-    </Button>
+  variant="mint"
+  onClick={() => {
+    const storeLink = `${window.location.origin}/?store=${store.id}`;
+
+    window.open(
+      `https://wa.me/?text=${encodeURIComponent(
+        `🛍️ Visit my online store\n\n${store.name}\n\n${storeLink}`
+      )}`,
+      "_blank"
+    );
+  }}
+>
+  📤 Share
+</Button>
   </div>
           {saveState === "saving" && <div style={{ fontSize: 11, color: T.marigold, marginTop: 4 }}>Saving...</div>}
           {saveState === "error" && <div style={{ fontSize: 11, color: "#F87171", marginTop: 4 }}>Save fail hua — dobara try karo</div>}
