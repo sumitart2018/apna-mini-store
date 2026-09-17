@@ -1631,6 +1631,40 @@ function Dashboard({ store, onAddProduct, onUpdateProduct, onDeleteProduct, onAd
         <div>
           <div style={{ fontFamily: "Inter", color: T.paper, fontSize: 20, fontWeight: 700 }}>{store.name}</div>
           <div style={{ fontFamily: "monospace", color: T.marigold, fontSize: 13 }}>{storeUrl}</div>
+          <div
+    style={{
+      display: "flex",
+      gap: 8,
+      marginTop: 12,
+      flexWrap: "wrap",
+    }}
+  >
+    <Button
+      variant="ghost"
+      onClick={() => {
+        navigator.clipboard.writeText(
+          `${window.location.origin}/store/${store.slug}`
+        );
+        alert("✅ Store Link Copied");
+      }}
+    >
+      📋 Copy Link
+    </Button>
+
+    <Button
+      variant="mint"
+      onClick={() => {
+        window.open(
+          `https://wa.me/?text=${encodeURIComponent(
+            `🛍️ Visit my online store\n${window.location.origin}/store/${store.slug}`
+          )}`,
+          "_blank"
+        );
+      }}
+    >
+      📤 Share
+    </Button>
+  </div>
           {saveState === "saving" && <div style={{ fontSize: 11, color: T.marigold, marginTop: 4 }}>Saving...</div>}
           {saveState === "error" && <div style={{ fontSize: 11, color: "#F87171", marginTop: 4 }}>Save fail hua — dobara try karo</div>}
         </div>
