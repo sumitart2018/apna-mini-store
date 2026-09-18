@@ -318,6 +318,15 @@ export default function App() {
   const [authUser, setAuthUser] = useState(undefined);
   const [view, setView] = useState("directory");
   const [activeStoreId, setActiveStoreId] = useState(null);
+  useEffect(() => {
+  const params = new URLSearchParams(window.location.search);
+  const storeId = params.get("store");
+
+  if (storeId) {
+    setActiveStoreId(storeId);
+    setView("storefront");
+  }
+}, []);
   const [toast, setToast] = useState("");
   const [cart, setCart] = useState([]);
   const [wishlist, setWishlist] = useState([]);
@@ -494,7 +503,14 @@ export default function App() {
     try { await removeStoreCategory(session, cat); setSaveState("idle"); } catch (e) { setSaveState("error"); flash("Category delete nahi hui"); }
   };
 
-  const openStore = (id) => { setActiveStoreId(id); setCart([]); setWishlist([]); setView("storefront"); };
+  const openStore = (id) => {
+  window.history.pushState({}, "", `/?store=${id}`);
+
+  setActiveStoreId(id);
+  setCart([]);
+  setWishlist([]);
+  setView("storefront");
+};
 
   const addToCart = (p, size) => {
     const key = p.id + "|" + (size || "");
@@ -633,7 +649,10 @@ export default function App() {
         <Dashboard store={ownerStore} onAddProduct={addProduct} onUpdateProduct={updateProduct} onDeleteProduct={deleteProduct} onAddCategory={addCategory} onDeleteCategory={deleteCategory} onUpdateStore={updateOwnerStore} onViewStore={() => openStore(ownerStore.id)} onUpdateOrderStatus={updateOrderStatus} saveState={saveState} />
       )}
       {view === "storefront" && activeStore && (
-        <Storefront store={activeStore} cart={cart} wishlist={wishlist} onBack={() => setView("directory")} onAdd={addToCart} onChangeQty={changeQty} onRemove={removeFromCart} onWishlist={toggleWishlist} showCart={showCart} setShowCart={setShowCart} subtotal={subtotal} shippingFee={shippingFee} gst={gst} total={total} onCheckout={checkoutToWhatsApp} />
+        <Storefront store={activeStore} cart={cart} wishlist={wishlist} onBack={() => {
+  window.history.pushState({}, "", "/");
+  setView("directory");
+}} onAdd={addToCart} onChangeQty={changeQty} onRemove={removeFromCart} onWishlist={toggleWishlist} showCart={showCart} setShowCart={setShowCart} subtotal={subtotal} shippingFee={shippingFee} gst={gst} total={total} onCheckout={checkoutToWhatsApp} />
       )}
       <Toast msg={toast} />
     </div>
