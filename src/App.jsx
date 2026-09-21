@@ -1,9 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef, useMemo } from "react";
-<<<<<<< HEAD
 import { ShoppingCart, MessageCircle, Palette, Package, QrCode, BarChart3, ShieldCheck, Smartphone, Users, Boxes, Search, Zap, Menu, X, Facebook, Instagram, Youtube, Heart, Truck, Headphones, User, Phone, MapPin, FileText, Mail, Twitter, ShoppingBag, Shirt, Coffee, KeyRound, Grid3x3, Share2, SlidersHorizontal, Home, Award, Star, ExternalLink, Globe, UtensilsCrossed, Moon, Sun, Sparkles, TrendingUp, Flame, Bell, LogOut, Filter, ArrowUpDown, ChevronLeft, ChevronRight, Store, Ban, CalendarDays, Clock, Hash, TrendingDown, Copy, Lock, Eye, EyeOff, Loader2 } from "lucide-react";
-=======
-import { ShoppingCart, MessageCircle, Palette, Package, QrCode, BarChart3, ShieldCheck, Smartphone, Users, Boxes, Search, Zap, Menu, X, Facebook, Instagram, Youtube, Heart, Truck, Headphones, User, Phone, MapPin, FileText, Mail, Twitter, ShoppingBag, Shirt, Coffee, KeyRound, Grid3x3, Share2, SlidersHorizontal, Home, Award, Star, ExternalLink, Globe, UtensilsCrossed, Moon, Sun, Sparkles, TrendingUp, Flame, Bell, LogOut, Filter, ArrowUpDown, ChevronLeft, ChevronRight, Store, Ban, CalendarDays, Clock, Hash, TrendingDown, Copy, Lock, Eye, } from "lucide-react";
->>>>>>> 87383b7 (Add store URL routing setup)
 import {
   watchAllStores, watchAllProducts, watchAllOrders, watchAuthState,
   signUpSeller, signInSeller, signOutUser, friendlyAuthError,
