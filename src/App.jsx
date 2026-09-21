@@ -351,6 +351,7 @@ export default function App() {
     [storeProfiles, productsByStore, ordersByStore]
   );
 
+  
   useEffect(() => {
     ensureFonts();
     const onErr = (source) => (err) => { setLoadError({ err, source }); setLoading(false); };
@@ -396,6 +397,22 @@ export default function App() {
   }, [authUser, isSuperAdmin]);
 
   const activeStore = stores.find((s) => s.id === activeStoreId);
+  useEffect(() => {
+  if (!stores.length) return;
+
+  const path = window.location.pathname.replace("/", "");
+
+  if (!path) return;
+
+  const store = stores.find(
+    (s) => s.id === path || s.slug === path
+  );
+
+  if (store) {
+    setActiveStoreId(store.id);
+    setView("storefront");
+  }
+}, [stores]);
   const ownerStore = stores.find((s) => s.id === session);
 
   // Real Firebase Authentication — see firestoreApi.js. Passwords are never
@@ -504,7 +521,7 @@ export default function App() {
   };
 
   const openStore = (id) => {
-  window.history.pushState({}, "", `/?store=${id}`);
+  window.history.pushState({}, "", "/" + id);
 
   setActiveStoreId(id);
   setCart([]);
