@@ -400,6 +400,21 @@ export default function App() {
   useEffect(() => {
   if (!stores.length) return;
 
+  const params = new URLSearchParams(window.location.search);
+  const queryStore = params.get("store");
+
+  if (queryStore) {
+    const store = stores.find(
+      (s) => s.id === queryStore || s.slug === queryStore
+    );
+
+    if (store) {
+      setActiveStoreId(store.id);
+      setView("storefront");
+      return;
+    }
+  }
+
   const path = window.location.pathname.replace("/", "");
 
   if (!path) return;
