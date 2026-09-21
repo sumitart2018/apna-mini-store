@@ -1,5 +1,9 @@
 import React, { useState, useEffect, useCallback, useRef, useMemo } from "react";
+<<<<<<< HEAD
 import { ShoppingCart, MessageCircle, Palette, Package, QrCode, BarChart3, ShieldCheck, Smartphone, Users, Boxes, Search, Zap, Menu, X, Facebook, Instagram, Youtube, Heart, Truck, Headphones, User, Phone, MapPin, FileText, Mail, Twitter, ShoppingBag, Shirt, Coffee, KeyRound, Grid3x3, Share2, SlidersHorizontal, Home, Award, Star, ExternalLink, Globe, UtensilsCrossed, Moon, Sun, Sparkles, TrendingUp, Flame, Bell, LogOut, Filter, ArrowUpDown, ChevronLeft, ChevronRight, Store, Ban, CalendarDays, Clock, Hash, TrendingDown, Copy, Lock, Eye, EyeOff, Loader2 } from "lucide-react";
+=======
+import { ShoppingCart, MessageCircle, Palette, Package, QrCode, BarChart3, ShieldCheck, Smartphone, Users, Boxes, Search, Zap, Menu, X, Facebook, Instagram, Youtube, Heart, Truck, Headphones, User, Phone, MapPin, FileText, Mail, Twitter, ShoppingBag, Shirt, Coffee, KeyRound, Grid3x3, Share2, SlidersHorizontal, Home, Award, Star, ExternalLink, Globe, UtensilsCrossed, Moon, Sun, Sparkles, TrendingUp, Flame, Bell, LogOut, Filter, ArrowUpDown, ChevronLeft, ChevronRight, Store, Ban, CalendarDays, Clock, Hash, TrendingDown, Copy, Lock, Eye, } from "lucide-react";
+>>>>>>> 87383b7 (Add store URL routing setup)
 import {
   watchAllStores, watchAllProducts, watchAllOrders, watchAuthState,
   signUpSeller, signInSeller, signOutUser, friendlyAuthError,
@@ -1479,6 +1483,7 @@ function LoginForm({ onSubmit, onSignup, onGoogleLogin }) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
+
   return (
     <AuthCard title="Seller Login">
       <Field label="Email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} />
@@ -1524,6 +1529,7 @@ function LoginForm({ onSubmit, onSignup, onGoogleLogin }) {
       setLoading(false);
     }
   }}
+<<<<<<< HEAD
 >
   {loading ? (
   <span
@@ -1577,6 +1583,9 @@ function LoginForm({ onSubmit, onSignup, onGoogleLogin }) {
   />
   Continue with Google
 </Button>
+=======
+>{loading ? "Logging in..." : "Login →"}</Button>
+>>>>>>> 87383b7 (Add store URL routing setup)
       <p style={{ textAlign: "center", fontSize: 13, marginTop: 14, color: T.ink }}>
         Naya store banana hai? <button style={{ color: T.magenta, cursor: "pointer", fontWeight: 600, background: "transparent", border: "none", padding: 0, font: "inherit" }} onClick={onSignup}>Signup karo</button>
       </p>
