@@ -402,6 +402,8 @@ export default function App() {
 
   const params = new URLSearchParams(window.location.search);
   const queryStore = params.get("store");
+  console.log("Query Store:", queryStore);
+  console.log("Stores:", stores);
 
   if (queryStore) {
     const store = stores.find(
