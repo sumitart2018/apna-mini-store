@@ -396,7 +396,12 @@ export default function App() {
     if (authUser) setView(isSuperAdmin ? "superadmin" : "dashboard");
   }, [authUser, isSuperAdmin]);
 
-  const activeStore = stores.find((s) => s.id === activeStoreId);
+  const activeStore =
+  stores.find((s) => s.id === activeStoreId) ||
+  stores.find((s) => s.slug === activeStoreId);
+  console.log("ActiveStoreId =", activeStoreId);
+  console.log("Stores =", stores);
+  console.log("ActiveStore =", activeStore);
   useEffect(() => {
   if (!stores.length) return;
 
