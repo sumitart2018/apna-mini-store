@@ -533,10 +533,14 @@ export default function App() {
     try { await removeStoreCategory(session, cat); setSaveState("idle"); } catch (e) { setSaveState("error"); flash("Category delete nahi hui"); }
   };
 
-  const openStore = (id) => {
-  window.history.pushState({}, "", "/" + id);
+const openStore = (id) => {
+  const store = stores.find((s) => s.id === id);
 
-  setActiveStoreId(id);
+  if (!store) return;
+
+  window.history.pushState({}, "", "/" + store.slug);
+
+  setActiveStoreId(store.id);
   setCart([]);
   setWishlist([]);
   setView("storefront");
