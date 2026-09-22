@@ -318,15 +318,6 @@ export default function App() {
   const [authUser, setAuthUser] = useState(undefined);
   const [view, setView] = useState("directory");
   const [activeStoreId, setActiveStoreId] = useState(null);
-  useEffect(() => {
-  const params = new URLSearchParams(window.location.search);
-  const storeId = params.get("store");
-
-  if (storeId) {
-    setActiveStoreId(storeId);
-    setView("storefront");
-  }
-}, []);
   const [toast, setToast] = useState("");
   const [cart, setCart] = useState([]);
   const [wishlist, setWishlist] = useState([]);
