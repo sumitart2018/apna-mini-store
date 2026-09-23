@@ -70,5 +70,12 @@ service cloud.firestore {
         allow delete: if false;
       }
     }
+
+    // The homepage loads public products with a collection-group query.
+    // Orders intentionally have no collection-group read rule: only the
+    // owning store may read its own orders through the nested rule above.
+    match /{path=**}/products/{productId} {
+      allow read: if true;
+    }
   }
 }
