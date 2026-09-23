@@ -1674,21 +1674,16 @@ function Dashboard({ store, onAddProduct, onUpdateProduct, onDeleteProduct, onAd
   onClick={() => {
     const storeLink = `${window.location.origin}/?store=${store.id}`;
 
-    <Button
-  variant="mint"
-  onClick={() => {
-    const storeLink = `${window.location.origin}/?store=${store.id}`;
-
-    window.open(
-      `https://wa.me/?text=${encodeURIComponent(
-        `🛍️ Visit my online store\n\n${store.name}\n\n${storeLink}`
-      )}`,
-      "_blank"
-    );
-  }}
->
-  📤 Share
-</Button>
+<Button
+                    variant="mint"
+                    onClick={() => {
+                      const storeLink = `${window.location.origin}/?store=${store.id}`;
+                      const msg = "🛍️ Visit my online store\n\n" + store.name + "\n\n" + storeLink;
+                      window.open("https://wa.me/?text=" + encodeURIComponent(msg), "_blank");
+                    }}
+                  >
+                    📤 Share
+                  </Button>    
   
   </div>
           {saveState === "saving" && <div style={{ fontSize: 11, color: T.marigold, marginTop: 4 }}>Saving...</div>}
