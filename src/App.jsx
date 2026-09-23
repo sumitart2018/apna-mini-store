@@ -1559,63 +1559,23 @@ function LoginForm({ onSubmit, onSignup, onGoogleLogin }) {
       setLoading(false);
     }
   }}
-<<<<<<< HEAD
 >
-  {loading ? (
-  <span
-    style={{
-      display: "flex",
-      alignItems: "center",
-      justifyContent: "center",
-      gap: 8,
-    }}
-  >
-    <Loader2
-      size={18}
-      style={{
-        animation: "spin 1s linear infinite",
-      }}
-    />
-    Logging in...
-  </span>
-) : (
-  "Login →"
-)}
-</Button>
-      <div
-  style={{
-    textAlign: "center",
-    margin: "16px 0",
-    color: "#888",
-    fontSize: 13,
-    fontWeight: 600,
-  }}
->
-  ───── OR ─────
-</div>
-
-<Button
-  variant="ghost"
-  style={{
-    width: "100%",
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 10,
-  }}
-  onClick={onGoogleLogin}
->
-  <img
-    src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg"
-    alt="Google"
-    width="20"
-    height="20"
-  />
-  Continue with Google
-</Button>
-=======
->{loading ? "Logging in..." : "Login →"}</Button>
->>>>>>> 87383b7 (Add store URL routing setup)
+      {loading ? (
+        <span style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
+          <Loader2 size={18} style={{ animation: "spin 1s linear infinite" }} />
+          Logging in...
+        </span>
+      ) : (
+        "Login →"
+      )}
+    </Button>
+    <div style={{ textAlign: "center", margin: "16px 0", color: "#888", fontSize: 13, fontWeight: 600 }}>
+      ───── OR ─────
+    </div>
+    <Button variant="ghost" style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: "center", gap: 10 }} onClick={onGoogleLogin}>
+      <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" alt="Google" width="20" height="20" />
+      Continue with Google
+    </Button>
       <p style={{ textAlign: "center", fontSize: 13, marginTop: 14, color: T.ink }}>
         Naya store banana hai? <button style={{ color: T.magenta, cursor: "pointer", fontWeight: 600, background: "transparent", border: "none", padding: 0, font: "inherit" }} onClick={onSignup}>Signup karo</button>
       </p>
