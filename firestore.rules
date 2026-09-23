@@ -11,24 +11,63 @@ service cloud.firestore {
       // their Firebase Auth uid). The Super Admin account can edit any
       // store — that's how plan activation / blocking / trial extension
       // works. Update this email if you ever change the Super Admin login.
-      allow create: if request.auth != null && request.auth.uid == storeId;
+      allow create: if request.auth != null
+        && request.auth.uid == storeId
+        && request.resource.data.ownerId == request.auth.uid;
       allow update: if request.auth != null &&
-        (request.auth.uid == storeId || request.auth.token.email == "sumitart2018@gmail.com");
+        (
+          request.auth.token.email == "sumitart2018@gmail.com" ||
+          (
+            request.auth.uid == storeId &&
+            request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+              "name", "tagline", "whatsapp", "color", "theme",
+              "minOrderValue", "freeShippingThreshold", "shippingFee", "gstPercent",
+              "categories", "ownerName", "altPhone", "address", "gstin", "about",
+              "facebook", "instagram", "youtube", "bannerImg", "logoImg"
+            ])
+          )
+        );
       allow delete: if false;
 
       match /products/{productId} {
         // Public storefronts need to read products without logging in.
         allow read: if true;
         // Only that store's own owner can add/edit/delete their products.
-        allow write: if request.auth != null && request.auth.uid == storeId;
+        allow create: if request.auth != null
+          && request.auth.uid == storeId
+          && request.resource.data.storeId == storeId;
+        allow update: if request.auth != null
+          && request.auth.uid == storeId
+          && resource.data.storeId == storeId
+          && request.resource.data.storeId == storeId;
+        allow delete: if request.auth != null && request.auth.uid == storeId;
       }
 
       match /orders/{orderId} {
-        // Checkout is anonymous (customers never log in) — anyone can
-        // CREATE an order, but only the store owner can read/update/delete
-        // (e.g. marking an order as shipped, or viewing the orders list).
-        allow create: if true;
-        allow read, update, delete: if request.auth != null && request.auth.uid == storeId;
+        // Checkout is anonymous (customers never log in), but the payload is
+        // validated before it is stored. Only the store owner can read an
+        // order or change its status.
+        allow create: if request.resource.data.storeId == storeId
+          && request.resource.data.status == "New"
+          && request.resource.data.date is string
+          && request.resource.data.customer is map
+          && request.resource.data.customer.name is string
+          && request.resource.data.customer.name.size() > 0
+          && request.resource.data.customer.name.size() <= 120
+          && request.resource.data.customer.phone is string
+          && request.resource.data.customer.phone.size() >= 10
+          && request.resource.data.customer.phone.size() <= 20
+          && request.resource.data.items is list
+          && request.resource.data.items.size() > 0
+          && request.resource.data.items.size() <= 50
+          && request.resource.data.total is number
+          && request.resource.data.total >= 0;
+        allow read: if request.auth != null && request.auth.uid == storeId;
+        allow update: if request.auth != null
+          && request.auth.uid == storeId
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(["status"])
+          && request.resource.data.status in ["New", "Confirmed", "Shipped", "Delivered", "Cancelled"];
+        allow delete: if false;
       }
     }
   }

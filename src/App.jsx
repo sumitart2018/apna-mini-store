@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { ShoppingCart, MessageCircle, Palette, Package, QrCode, BarChart3, ShieldCheck, Smartphone, Users, Boxes, Search, Zap, Menu, X, Facebook, Instagram, Youtube, Heart, Truck, Headphones, User, Phone, MapPin, FileText, Mail, Twitter, ShoppingBag, Shirt, Coffee, KeyRound, Grid3x3, Share2, SlidersHorizontal, Home, Award, Star, ExternalLink, Globe, UtensilsCrossed, Moon, Sun, Sparkles, TrendingUp, Flame, Bell, LogOut, Filter, ArrowUpDown, ChevronLeft, ChevronRight, Store, Ban, CalendarDays, Clock, Hash, TrendingDown, Copy, Lock, Eye, EyeOff, Loader2 } from "lucide-react";
 import {
-  watchAllStores, watchAllProducts, watchAllOrders, watchAuthState,
+  watchAllStores, watchAllProducts, watchOrdersForStore, watchAuthState,
   signUpSeller, signInSeller, signOutUser, friendlyAuthError,
   updateStoreProfile, addStoreCategory, removeStoreCategory,
   setStorePlan, setStoreBlocked, setTrialStartedAt,
@@ -163,6 +163,50 @@ function getStoreStatus(store) {
 function slugify(s) {
   return s.toLowerCase().trim().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "");
 }
+
+function storePath(store) {
+  const key = store && (store.slug || store.id);
+  return key ? `/${encodeURIComponent(key)}` : "/";
+}
+
+function storeUrl(store) {
+  if (typeof window === "undefined") return storePath(store);
+  return `${window.location.origin}${storePath(store)}`;
+}
+
+function requestedStoreRoute() {
+  const params = new URLSearchParams(window.location.search);
+  const queryStore = params.get("store");
+  if (queryStore) return { key: queryStore.trim(), fromQuery: true };
+  const pathPart = window.location.pathname.split("/").filter(Boolean)[0] || "";
+  try {
+    return { key: decodeURIComponent(pathPart), fromQuery: false };
+  } catch {
+    return { key: pathPart, fromQuery: false };
+  }
+}
+
+async function copyText(text) {
+  try {
+    if (navigator.clipboard) {
+      await navigator.clipboard.writeText(text);
+      return true;
+    }
+    const input = document.createElement("textarea");
+    input.value = text;
+    input.setAttribute("readonly", "");
+    input.style.position = "fixed";
+    input.style.opacity = "0";
+    document.body.appendChild(input);
+    input.select();
+    const copied = document.execCommand("copy");
+    input.remove();
+    return copied;
+  } catch {
+    return false;
+  }
+}
+
 function discountPct(mrp, price) {
   if (!mrp || mrp <= price) return 0;
   return Math.round(((mrp - price) / mrp) * 100);
@@ -361,22 +405,22 @@ export default function App() {
     return () => { unsubStores(); unsubProducts(); unsubAuth(); clearTimeout(timeout); };
   }, []);
 
+  // authUser is a real, persisted Firebase Auth session — it survives page
+  // reloads on its own, unlike the old in-memory-only `session` state.
+  const isSuperAdmin = !!authUser && authUser.email === SUPER_ADMIN_EMAIL;
+  const session = authUser && !isSuperAdmin ? authUser.uid : null;
+
   useEffect(() => {
     if (authUser === undefined) return;
-    if (!authUser) {
+    if (!authUser || isSuperAdmin) {
       setOrdersByStore({});
       return;
     }
-    const unsubOrders = watchAllOrders(setOrdersByStore, (err) => { setLoadError({ err, source: "orders" }); setLoading(false); });
+    const unsubOrders = watchOrdersForStore(authUser.uid, (orders) => {
+      setOrdersByStore({ [authUser.uid]: orders });
+    }, (err) => { setLoadError({ err, source: "orders" }); setLoading(false); });
     return () => unsubOrders();
-  }, [authUser]);
-
-  // authUser is a real, persisted Firebase Auth session — it survives page
-  // reloads on its own, unlike the old in-memory-only `session` state. The
-  // Super Admin is just the Firebase user whose email matches SUPER_ADMIN_EMAIL;
-  // there's no separate password constant to compare against any more.
-  const isSuperAdmin = !!authUser && authUser.email === SUPER_ADMIN_EMAIL;
-  const session = authUser && !isSuperAdmin ? authUser.uid : null;
+  }, [authUser, isSuperAdmin]);
 
   // On first load, if the browser already has a persisted login, jump
   // straight to the right screen instead of showing the public directory
@@ -390,42 +434,49 @@ export default function App() {
   const activeStore =
   stores.find((s) => s.id === activeStoreId) ||
   stores.find((s) => s.slug === activeStoreId);
-  console.log("ActiveStoreId =", activeStoreId);
-  console.log("Stores =", stores);
-  console.log("ActiveStore =", activeStore);
+
   useEffect(() => {
-  if (!stores.length) return;
+    if (!stores.length) return undefined;
 
-  const params = new URLSearchParams(window.location.search);
-  const queryStore = params.get("store");
-  console.log("Query Store:", queryStore);
-  console.log("Stores:", stores);
+    const syncStoreRoute = () => {
+      const { key, fromQuery } = requestedStoreRoute();
+      if (!key) {
+        setActiveStoreId(null);
+        setView((current) => current === "storefront" ? "directory" : current);
+        return;
+      }
 
-  if (queryStore) {
-    const store = stores.find(
-      (s) => s.id === queryStore || s.slug === queryStore
-    );
+      const store = stores.find((s) => s.id === key || s.slug === key);
+      if (!store) return;
 
-    if (store) {
       setActiveStoreId(store.id);
       setView("storefront");
-      return;
+      // Convert old ?store=ID links to the stable, shareable slug URL.
+      if (fromQuery && store.slug) window.history.replaceState({}, "", storePath(store));
+    };
+
+    syncStoreRoute();
+    window.addEventListener("popstate", syncStoreRoute);
+    return () => window.removeEventListener("popstate", syncStoreRoute);
+  }, [stores]);
+
+  useEffect(() => {
+    if (view === "storefront" && activeStore) {
+      document.title = `${activeStore.name} | Apna Mini Store`;
+      const description = activeStore.tagline || `${activeStore.name} ka online store — WhatsApp par order karein.`;
+      let meta = document.querySelector('meta[name="description"]');
+      if (!meta) {
+        meta = document.createElement("meta");
+        meta.name = "description";
+        document.head.appendChild(meta);
+      }
+      meta.content = description;
+    } else {
+      document.title = "Apna Mini Store — Mini Store Platform";
+      const meta = document.querySelector('meta[name="description"]');
+      if (meta) meta.content = "Apna Mini Store — Apni Dukaan. Apna Brand. Apna Online Store.";
     }
-  }
-
-  const path = window.location.pathname.replace("/", "");
-
-  if (!path) return;
-
-  const store = stores.find(
-    (s) => s.id === path || s.slug === path
-  );
-
-  if (store) {
-    setActiveStoreId(store.id);
-    setView("storefront");
-  }
-}, [stores]);
+  }, [view, activeStore]);
   const ownerStore = stores.find((s) => s.id === session);
 
   // Real Firebase Authentication — see firestoreApi.js. Passwords are never
@@ -533,18 +584,18 @@ export default function App() {
     try { await removeStoreCategory(session, cat); setSaveState("idle"); } catch (e) { setSaveState("error"); flash("Category delete nahi hui"); }
   };
 
-const openStore = (id) => {
-  const store = stores.find((s) => s.id === id);
+ const openStore = (id) => {
+   const store = stores.find((s) => s.id === id);
 
   if (!store) return;
 
-  window.history.pushState({}, "", "/" + store.slug);
+   window.history.pushState({ storeId: store.id }, "", storePath(store));
 
   setActiveStoreId(store.id);
   setCart([]);
   setWishlist([]);
-  setView("storefront");
-};
+   setView("storefront");
+ };
 
   const addToCart = (p, size) => {
     const key = p.id + "|" + (size || "");
@@ -684,9 +735,10 @@ const openStore = (id) => {
       )}
       {view === "storefront" && activeStore && (
         <Storefront store={activeStore} cart={cart} wishlist={wishlist} onBack={() => {
-  window.history.pushState({}, "", "/");
-  setView("directory");
-}} onAdd={addToCart} onChangeQty={changeQty} onRemove={removeFromCart} onWishlist={toggleWishlist} showCart={showCart} setShowCart={setShowCart} subtotal={subtotal} shippingFee={shippingFee} gst={gst} total={total} onCheckout={checkoutToWhatsApp} />
+          window.history.pushState({}, "", "/");
+          setActiveStoreId(null);
+          setView("directory");
+        }} onAdd={addToCart} onChangeQty={changeQty} onRemove={removeFromCart} onWishlist={toggleWishlist} showCart={showCart} setShowCart={setShowCart} subtotal={subtotal} shippingFee={shippingFee} gst={gst} total={total} onCheckout={checkoutToWhatsApp} />
       )}
       <Toast msg={toast} />
     </div>
@@ -1133,7 +1185,7 @@ function Directory({ stores, onOpen, onCreate, onLogin, onSuperAdmin }) {
                   <div style={{ width: 42, height: 42, borderRadius: 12, background: s.color || DK.green, marginBottom: 12 }} />
                   <div style={{ fontWeight: 700, fontSize: 16 }}>{s.name}</div>
                   <div style={{ fontSize: 13, color: DK.muted, marginTop: 4 }}>{s.tagline || `${s.products.length} products`}</div>
-                  <div style={{ fontSize: 12, color: DK.muted, opacity: 0.6, marginTop: 10, fontFamily: "monospace" }}>/{s.id}</div>
+                   <div style={{ fontSize: 12, color: DK.muted, opacity: 0.6, marginTop: 10, fontFamily: "monospace" }}>/{s.slug || s.id}</div>
                   <div style={{ marginTop: 12, color: DK.green, fontWeight: 700, fontSize: 13 }}>Visit Store →</div>
                 </button>
               </GlassCard>
@@ -1609,7 +1661,8 @@ function Dashboard({ store, onAddProduct, onUpdateProduct, onDeleteProduct, onAd
   });
   const [profileErrors, setProfileErrors] = useState({});
   const [profileJustSaved, setProfileJustSaved] = useState(false);
-  const storeUrl = `apnaministore.com/${store.id}`;
+  const [linkStatus, setLinkStatus] = useState("");
+  const storeLink = storeUrl(store);
 
   const filteredOrders = orderFilter === "All" ? orders : orders.filter((o) => o.status === orderFilter);
   const analytics = {
@@ -1648,7 +1701,7 @@ function Dashboard({ store, onAddProduct, onUpdateProduct, onDeleteProduct, onAd
       <div style={{ background: T.ink, borderRadius: 14, padding: 20, marginBottom: 24, display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 12 }}>
         <div>
           <div style={{ fontFamily: "Inter", color: T.paper, fontSize: 20, fontWeight: 700 }}>{store.name}</div>
-          <div style={{ fontFamily: "monospace", color: T.marigold, fontSize: 13 }}>{storeUrl}</div>
+           <div style={{ fontFamily: "monospace", color: T.marigold, fontSize: 13, wordBreak: "break-all" }}>{storeLink}</div>
           <div
     style={{
       display: "flex",
@@ -1659,11 +1712,10 @@ function Dashboard({ store, onAddProduct, onUpdateProduct, onDeleteProduct, onAd
   >
     <Button
   variant="ghost"
-  onClick={() => {
-    const storeLink = `${window.location.origin}/?store=${store.id}`;
-
-    navigator.clipboard.writeText(storeLink);
-    alert("✅ Store Link Copied");
+  onClick={async () => {
+    const copied = await copyText(storeLink);
+    setLinkStatus(copied ? "✅ Link copied" : "Link copy nahi hua");
+    setTimeout(() => setLinkStatus(""), 2200);
   }}
 >
   📋 Copy Link
@@ -1672,15 +1724,15 @@ function Dashboard({ store, onAddProduct, onUpdateProduct, onDeleteProduct, onAd
  <Button
                     variant="mint"
                     onClick={() => {
-                      const storeLink = `${window.location.origin}/?store=${store.id}`;
-                      const msg = "🛍️ Visit my online store\n\n" + store.name + "\n\n" + storeLink;
-                      window.open("https://wa.me/?text=" + encodeURIComponent(msg), "_blank");
-                    }}
+                       const msg = "🛍️ Visit my online store\n\n" + store.name + "\n\n" + storeLink;
+                       window.open("https://wa.me/?text=" + encodeURIComponent(msg), "_blank", "noopener,noreferrer");
+                     }}
                   >
                     📤 Share
-                  </Button>    
+  </Button>
   
   </div>
+          {linkStatus && <div style={{ fontSize: 11, color: T.mint, marginTop: 4 }}>{linkStatus}</div>}
           {saveState === "saving" && <div style={{ fontSize: 11, color: T.marigold, marginTop: 4 }}>Saving...</div>}
           {saveState === "error" && <div style={{ fontSize: 11, color: "#F87171", marginTop: 4 }}>Save fail hua — dobara try karo</div>}
         </div>

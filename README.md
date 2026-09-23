@@ -68,8 +68,8 @@ This pushes `firestore.rules` and `storage.rules` — they're written so that:
 - Anyone can **read** store profiles/products (needed for the public
   storefronts and directory — customers aren't logged in).
 - Only a store's own owner can **write** to their own store/products.
-- Anyone can **create** an order (checkout is anonymous, like the original
-  WhatsApp flow) but only the store owner can read/update their orders.
+- Customers can **create a validated order** without logging in (checkout stays
+  anonymous), but only the store owner can read it or change its status.
 - The Super Admin (matched by email) can update any store — that's how
   plan activation / blocking / trial extension works.
 

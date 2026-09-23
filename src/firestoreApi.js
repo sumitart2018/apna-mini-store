@@ -169,22 +169,16 @@ export function watchAllProducts(onChange, onError) {
   );
 }
 
-export function watchAllOrders(onChange, onError) {
+// Orders are private to one seller. Keep this listener scoped to that seller
+// instead of querying the entire collection group and relying on rules to
+// filter it — Firestore security rules are not query filters.
+export function watchOrdersForStore(storeId, onChange, onError) {
   return onSnapshot(
-    collectionGroup(db, "orders"),
+    query(collection(db, "stores", storeId, "orders"), fsOrderBy("date", "desc")),
     (snap) => {
-      const byStore = {};
-      snap.docs.forEach((d) => {
-        const data = { id: d.id, ...d.data() };
-        const sid = data.storeId;
-        if (!byStore[sid]) byStore[sid] = [];
-        byStore[sid].push(data);
-      });
-      // newest first, matching the old array-prepend behaviour
-      Object.values(byStore).forEach((list) => list.sort((a, b) => new Date(b.date) - new Date(a.date)));
-      onChange(byStore);
+      onChange(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
     },
-    (err) => { console.error("watchAllOrders failed:", err); if (onError) onError(err); }
+    (err) => { console.error("watchOrdersForStore failed:", err); if (onError) onError(err); }
   );
 }
 
