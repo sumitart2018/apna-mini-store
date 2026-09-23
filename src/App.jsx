@@ -1669,12 +1669,7 @@ function Dashboard({ store, onAddProduct, onUpdateProduct, onDeleteProduct, onAd
   📋 Copy Link
 </Button>
 
-    <Button
-  variant="mint"
-  onClick={() => {
-    const storeLink = `${window.location.origin}/?store=${store.id}`;
-
-<Button
+ <Button
                     variant="mint"
                     onClick={() => {
                       const storeLink = `${window.location.origin}/?store=${store.id}`;
