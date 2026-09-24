@@ -164,6 +164,75 @@ function slugify(s) {
   return s.toLowerCase().trim().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "");
 }
 
+function productVariantOptions(product) {
+  const list = (value) => Array.isArray(value) ? value.filter(Boolean) : [];
+  return {
+    sizes: list(product && product.sizes),
+    colors: list(product && product.colors),
+    weights: list(product && product.weights),
+  };
+}
+
+function defaultProductVariant(product) {
+  const options = productVariantOptions(product);
+  return {
+    size: options.sizes[0] || "",
+    color: options.colors[0] || "",
+    weight: options.weights[0] || "",
+  };
+}
+
+function normalizeProductVariant(variant) {
+  if (typeof variant === "string") return { size: variant, color: "", weight: "" };
+  return {
+    size: variant && variant.size ? variant.size : "",
+    color: variant && variant.color ? variant.color : "",
+    weight: variant && variant.weight ? variant.weight : "",
+  };
+}
+
+function productVariantKey(productId, variant) {
+  const selected = normalizeProductVariant(variant);
+  return [productId, selected.size, selected.color, selected.weight].map((value) => encodeURIComponent(value)).join("|");
+}
+
+function productVariantLabel(variant) {
+  const selected = normalizeProductVariant(variant);
+  return [
+    selected.size && `Size: ${selected.size}`,
+    selected.color && `Color: ${selected.color}`,
+    selected.weight && `Weight: ${selected.weight}`,
+  ].filter(Boolean).join(" • ");
+}
+
+function VariantSelectors({ product, value, onChange, accent = T.ink, border = `${T.ink}33`, text = T.ink, background = "transparent", compact = false }) {
+  const options = productVariantOptions(product);
+  const fields = [
+    ["size", "Size", options.sizes],
+    ["color", "Color", options.colors],
+    ["weight", "Weight", options.weights],
+  ].filter(([, , values]) => values.length > 0);
+  if (!fields.length) return null;
+
+  return (
+    <div style={{ display: "grid", gridTemplateColumns: fields.length > 1 ? "repeat(2, minmax(0, 1fr))" : "1fr", gap: compact ? 6 : 8, marginTop: compact ? 8 : 10 }}>
+      {fields.map(([key, label, values]) => (
+        <label key={key} style={{ display: "grid", gap: 3, color: text, fontSize: compact ? 10 : 11, fontWeight: 700 }}>
+          {label}
+          <select
+            aria-label={`${label} चुनें`}
+            value={value[key] || values[0]}
+            onChange={(event) => onChange({ ...value, [key]: event.target.value })}
+            style={{ width: "100%", minHeight: compact ? 32 : 36, padding: compact ? "5px 6px" : "7px 8px", borderRadius: 6, border: `1px solid ${border}`, background, color: text, fontFamily: "Inter", fontSize: compact ? 11 : 12.5 }}
+          >
+            {values.map((option) => <option key={option} value={option}>{option}</option>)}
+          </select>
+        </label>
+      ))}
+    </div>
+  );
+}
+
 function storePath(store) {
   const key = store && (store.slug || store.id);
   return key ? `/${encodeURIComponent(key)}` : "/";
@@ -597,12 +666,13 @@ export default function App() {
    setView("storefront");
  };
 
-  const addToCart = (p, size) => {
-    const key = p.id + "|" + (size || "");
+  const addToCart = (p, variant) => {
+    const selectedVariant = normalizeProductVariant(variant);
+    const key = productVariantKey(p.id, selectedVariant);
     setCart((c) => {
       const found = c.find((i) => i.key === key);
       if (found) return c.map((i) => (i.key === key ? { ...i, qty: i.qty + 1 } : i));
-      return [...c, { ...p, key, size: size || "", qty: 1 }];
+      return [...c, { ...p, ...selectedVariant, variantLabel: productVariantLabel(selectedVariant), key, qty: 1 }];
     });
     flash("Cart mein add ho gaya");
   };
@@ -621,13 +691,13 @@ export default function App() {
     if (!activeStore || checkoutInFlight.current) return;
     checkoutInFlight.current = true;
     try {
-      const lines = cart.map((i) => `• ${i.name}${i.size ? ` (${i.size})` : ""} x${i.qty} — ₹${i.price * i.qty}`).join("\n");
+      const lines = cart.map((i) => `• ${i.name}${productVariantLabel(i) ? ` (${productVariantLabel(i)})` : ""} x${i.qty} — ₹${i.price * i.qty}`).join("\n");
       const msg = `Hi ${activeStore.name}! Main order karna chahta hoon:\n\nName: ${customer.name}\nPhone: ${customer.phone}${customer.address ? `\nAddress: ${customer.address}` : ""}\n\n${lines}\n\nSubtotal: ₹${subtotal}\nShipping: ₹${shippingFee}\nGST: ₹${gst}\nTotal: ₹${total}`;
 
       const order = {
         date: new Date().toISOString(),
         customer,
-        items: cart.map((i) => ({ name: i.name, size: i.size, qty: i.qty, price: i.price })),
+        items: cart.map((i) => ({ name: i.name, size: i.size, color: i.color, weight: i.weight, variantLabel: productVariantLabel(i), qty: i.qty, price: i.price })),
         subtotal, shippingFee, gst, total,
         status: "New",
       };
@@ -1642,7 +1712,7 @@ function Dashboard({ store, onAddProduct, onUpdateProduct, onDeleteProduct, onAd
   const orders = store.orders || [];
   const [orderFilter, setOrderFilter] = useState("All");
   const [newCat, setNewCat] = useState("");
-  const [np, setNp] = useState({ name: "", price: "", mrp: "", category: store.categories[0] || "", inStock: true, sizes: "", img: "" });
+  const [np, setNp] = useState({ name: "", price: "", mrp: "", category: store.categories[0] || "", inStock: true, sizes: "", colors: "", weights: "", img: "" });
   const [editingId, setEditingId] = useState(null);
   const [npErrors, setNpErrors] = useState({});
   const [settings, setSettings] = useState({ minOrderValue: store.minOrderValue || 0, freeShippingThreshold: store.freeShippingThreshold || 0, shippingFee: store.shippingFee || 0, gstPercent: store.gstPercent || 0 });
@@ -1672,13 +1742,13 @@ function Dashboard({ store, onAddProduct, onUpdateProduct, onDeleteProduct, onAd
   };
 
   const resetProductForm = () => {
-    setNp({ name: "", price: "", mrp: "", category: store.categories[0] || "", inStock: true, sizes: "", img: "" });
+    setNp({ name: "", price: "", mrp: "", category: store.categories[0] || "", inStock: true, sizes: "", colors: "", weights: "", img: "" });
     setEditingId(null);
     setNpErrors({});
   };
 
   const startEditProduct = (p) => {
-    setNp({ name: p.name, price: String(p.price), mrp: p.mrp ? String(p.mrp) : "", category: p.category || "", inStock: p.inStock, sizes: (p.sizes || []).join(", "), img: p.img || "" });
+    setNp({ name: p.name, price: String(p.price), mrp: p.mrp ? String(p.mrp) : "", category: p.category || "", inStock: p.inStock, sizes: (p.sizes || []).join(", "), colors: (p.colors || []).join(", "), weights: (p.weights || []).join(", "), img: p.img || "" });
     setEditingId(p.id);
     setNpErrors({});
   };
@@ -1690,7 +1760,8 @@ function Dashboard({ store, onAddProduct, onUpdateProduct, onDeleteProduct, onAd
     if (np.mrp && Number(np.mrp) < Number(np.price)) errs.mrp = "MRP, selling price se kam nahi ho sakta";
     if (Object.keys(errs).length) { setNpErrors(errs); return; }
 
-    const payload = { name: np.name.trim(), price: Number(np.price), mrp: np.mrp ? Number(np.mrp) : 0, category: np.category, inStock: np.inStock, sizes: np.sizes ? np.sizes.split(",").map((s) => s.trim()).filter(Boolean) : [], img: np.img };
+    const toOptions = (value) => value.split(",").map((item) => item.trim()).filter(Boolean);
+    const payload = { name: np.name.trim(), price: Number(np.price), mrp: np.mrp ? Number(np.mrp) : 0, category: np.category, inStock: np.inStock, sizes: toOptions(np.sizes), colors: toOptions(np.colors), weights: toOptions(np.weights), img: np.img };
     if (editingId) onUpdateProduct(editingId, payload);
     else onAddProduct(payload);
     resetProductForm();
@@ -1811,7 +1882,7 @@ function Dashboard({ store, onAddProduct, onUpdateProduct, onDeleteProduct, onAd
               <div style={{ marginTop: 10, borderTop: `1px dashed ${T.ink}33`, paddingTop: 10 }}>
                 {o.items.map((i, idx) => (
                   <div key={idx} style={{ fontSize: 13, display: "flex", justifyContent: "space-between", padding: "2px 0" }}>
-                    <span>{i.name}{i.size ? ` (${i.size})` : ""} x{i.qty}</span>
+                    <span>{i.name}{productVariantLabel(i) ? ` (${productVariantLabel(i)})` : ""} x{i.qty}</span>
                     <span>₹{i.price * i.qty}</span>
                   </div>
                 ))}
@@ -1969,6 +2040,8 @@ function Dashboard({ store, onAddProduct, onUpdateProduct, onDeleteProduct, onAd
                 {store.categories.map((c) => <option key={c} value={c}>{c}</option>)}
               </select>
               <input placeholder="Sizes (comma se, e.g. S,M,L) — optional" value={np.sizes} onChange={(e) => setNp({ ...np, sizes: e.target.value })} style={{ padding: "10px 12px", borderRadius: 8, border: `2px solid ${T.ink}22`, fontFamily: "Inter" }} />
+              <input placeholder="Colors (comma se, e.g. Red,Blue,Black) — optional" value={np.colors} onChange={(e) => setNp({ ...np, colors: e.target.value })} style={{ padding: "10px 12px", borderRadius: 8, border: `2px solid ${T.ink}22`, fontFamily: "Inter" }} />
+              <input placeholder="Weights (comma se, e.g. 250g,500g,1kg) — optional" value={np.weights} onChange={(e) => setNp({ ...np, weights: e.target.value })} style={{ padding: "10px 12px", borderRadius: 8, border: `2px solid ${T.ink}22`, fontFamily: "Inter" }} />
               <label style={{ display: "flex", alignItems: "center", gap: 8, fontFamily: "Inter", fontSize: 14, minHeight: 44 }}>
                 <input type="checkbox" checked={np.inStock} onChange={(e) => setNp({ ...np, inStock: e.target.checked })} style={{ width: 20, height: 20 }} /> In Stock
               </label>
@@ -1990,7 +2063,7 @@ function Dashboard({ store, onAddProduct, onUpdateProduct, onDeleteProduct, onAd
                   <span style={{ color: T.magenta, fontWeight: 700 }}>₹{p.price}</span>
                   {p.mrp > p.price && <span style={{ fontSize: 12, opacity: 0.5, textDecoration: "line-through" }}>₹{p.mrp}</span>}
                 </div>
-                <div style={{ fontSize: 12, opacity: 0.6, marginTop: 2 }}>{p.category} {p.sizes && p.sizes.length > 0 ? `• ${p.sizes.join("/")}` : ""}</div>
+                <div style={{ fontSize: 12, opacity: 0.6, marginTop: 2 }}>{p.category} {productVariantLabel({ size: (p.sizes || []).join("/"), color: (p.colors || []).join("/"), weight: (p.weights || []).join("/") }) ? `• ${productVariantLabel({ size: (p.sizes || []).join("/"), color: (p.colors || []).join("/"), weight: (p.weights || []).join("/") })}` : ""}</div>
                 <div style={{ fontSize: 11, marginTop: 4, color: p.inStock ? T.mint : T.red, fontWeight: 700 }}>{p.inStock ? "In Stock" : "Out of Stock"}</div>
                 <div style={{ display: "flex", gap: 12, marginTop: 8 }}>
                   <button style={{ minHeight: 36, padding: "8px 0", fontSize: 12.5, color: T.ink, background: "transparent", border: "none", cursor: "pointer", textDecoration: "underline" }} onClick={() => startEditProduct(p)}>Edit</button>
@@ -2007,9 +2080,9 @@ function Dashboard({ store, onAddProduct, onUpdateProduct, onDeleteProduct, onAd
 }
 
 function ProductCard({ p, store, wished, onWishlist, onAdd, cartQtyForKey, onChangeQty }) {
-  const [size, setSize] = useState(p.sizes && p.sizes.length ? p.sizes[0] : "");
+  const [variant, setVariant] = useState(() => defaultProductVariant(p));
   const pct = discountPct(p.mrp, p.price);
-  const key = p.id + "|" + (size || "");
+  const key = productVariantKey(p.id, variant);
   const qty = cartQtyForKey(key);
 
   return (
@@ -2031,11 +2104,7 @@ function ProductCard({ p, store, wished, onWishlist, onAdd, cartQtyForKey, onCha
         <span style={{ color: T.magenta, fontWeight: 800, fontFamily: "Inter", fontSize: 16 }}>₹{p.price}</span>
         {p.mrp > p.price && <span style={{ fontSize: 12, opacity: 0.5, textDecoration: "line-through" }}>₹{p.mrp}</span>}
       </div>
-      {p.sizes && p.sizes.length > 0 && (
-        <select value={size} onChange={(e) => setSize(e.target.value)} style={{ marginTop: 8, width: "100%", minHeight: 36, padding: "8px", borderRadius: 6, border: `1.5px solid ${T.ink}33`, fontFamily: "Inter", fontSize: 12.5 }}>
-          {p.sizes.map((s) => <option key={s} value={s}>{s}</option>)}
-        </select>
-      )}
+      <VariantSelectors product={p} value={variant} onChange={setVariant} />
       {qty > 0 ? (
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: 10, border: `1px solid ${T.border}`, borderRadius: 8, overflow: "hidden" }}>
           <button onClick={() => onChangeQty(key, -1)} aria-label="Quantity kam karo" style={{ padding: "8px 16px", minHeight: 36, cursor: "pointer", fontWeight: 800, background: T.paper, border: "none" }}>−</button>
@@ -2043,9 +2112,41 @@ function ProductCard({ p, store, wished, onWishlist, onAdd, cartQtyForKey, onCha
           <button onClick={() => onChangeQty(key, 1)} aria-label="Quantity badhao" style={{ padding: "8px 16px", minHeight: 36, cursor: "pointer", fontWeight: 800, background: T.paper, border: "none" }}>+</button>
         </div>
       ) : (
-        <Button variant="dark" disabled={!p.inStock} style={{ width: "100%", marginTop: 10, fontSize: 13, padding: "8px" }} onClick={() => onAdd(p, size)}>
+        <Button variant="dark" disabled={!p.inStock} style={{ width: "100%", marginTop: 10, fontSize: 13, padding: "8px" }} onClick={() => onAdd(p, variant)}>
           {p.inStock ? "Add to Cart" : "Out of Stock"}
         </Button>
+      )}
+    </div>
+  );
+}
+
+function ModernProductCard({ p, palette, wished, onWishlist, onAdd, cartQtyForKey, onChangeQty }) {
+  const [variant, setVariant] = useState(() => defaultProductVariant(p));
+  const key = productVariantKey(p.id, variant);
+  const qty = cartQtyForKey(key);
+
+  return (
+    <div className="sads-pcard" style={{ background: palette.cardBg, border: `1px solid ${palette.borderColor}`, borderRadius: 14, padding: 10, position: "relative" }}>
+      <button onClick={() => onWishlist(p)} aria-label={wished ? "Wishlist se hatao" : "Wishlist mein add karo"} aria-pressed={wished} style={{ position: "absolute", top: 8, right: 8, zIndex: 2, background: palette.isDark ? "#1a1a2e" : "#fff", border: "none", width: 30, height: 30, borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", boxShadow: "0 1px 4px rgba(0,0,0,0.12)", color: wished ? T.magenta : palette.textColor }}>
+        <Heart size={14} strokeWidth={2} fill={wished ? T.magenta : "none"} />
+      </button>
+      <ProductImg color={palette.accent} img={p.img} />
+      <div style={{ fontWeight: 700, fontSize: 13, color: palette.textColor, marginTop: 2 }}>{p.name}</div>
+      <div style={{ display: "flex", gap: 6, alignItems: "baseline", marginTop: 4 }}>
+        <span style={{ color: palette.accent, fontWeight: 800, fontSize: 15 }}>₹{p.price}</span>
+        {p.mrp > p.price && <span style={{ fontSize: 11.5, color: palette.mutedColor, textDecoration: "line-through" }}>₹{p.mrp}</span>}
+      </div>
+      <VariantSelectors product={p} value={variant} onChange={setVariant} accent={palette.accent} border={palette.borderColor} text={palette.textColor} background={palette.cardBg} compact />
+      {qty > 0 ? (
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: 8, border: `1px solid ${palette.borderColor}`, borderRadius: 8, overflow: "hidden" }}>
+          <button onClick={() => onChangeQty(key, -1)} aria-label="Quantity kam karo" style={{ padding: "6px 12px", minHeight: 32, cursor: "pointer", fontWeight: 800, background: palette.isDark ? "#1a1a2e" : T.paper, border: "none", color: palette.textColor }}>−</button>
+          <div style={{ fontWeight: 700, fontFamily: "Inter", fontSize: 13, color: palette.textColor }}>{qty}</div>
+          <button onClick={() => onChangeQty(key, 1)} aria-label="Quantity badhao" style={{ padding: "6px 12px", minHeight: 32, cursor: "pointer", fontWeight: 800, background: palette.isDark ? "#1a1a2e" : T.paper, border: "none", color: palette.textColor }}>+</button>
+        </div>
+      ) : (
+        <button className="sads-storebtn" disabled={!p.inStock} onClick={() => onAdd(p, variant)} style={{ width: "100%", marginTop: 8, minHeight: 34, background: p.inStock ? palette.accent : palette.borderColor, color: "#fff", border: "none", borderRadius: 8, fontWeight: 700, fontSize: 12, cursor: p.inStock ? "pointer" : "not-allowed" }}>
+          {p.inStock ? "Add" : "Out of Stock"}
+        </button>
       )}
     </div>
   );
@@ -2158,33 +2259,18 @@ function ModernStorefrontBody({ store, cart, wishlist, onBack, onAdd, onWishlist
         <div id="ms-products">
           <div style={{ fontWeight: 800, fontSize: 15, color: P.textColor, marginBottom: 12 }}>{filter === "All" ? "Best Selling Products" : filter}</div>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-            {filtered.map((p) => {
-              const wished = !!wishlist.find((w) => w.id === p.id);
-              return (
-                <div key={p.id} className="sads-pcard" style={{ background: P.cardBg, border: `1px solid ${P.borderColor}`, borderRadius: 14, padding: 10, position: "relative" }}>
-                  <button onClick={() => onWishlist(p)} aria-label={wished ? "Wishlist se hatao" : "Wishlist mein add karo"} style={{ position: "absolute", top: 8, right: 8, zIndex: 2, background: P.isDark ? "#1a1a2e" : "#fff", border: "none", width: 30, height: 30, borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", boxShadow: "0 1px 4px rgba(0,0,0,0.12)", color: wished ? T.magenta : P.textColor }}>
-                    <Heart size={14} strokeWidth={2} fill={wished ? T.magenta : "none"} />
-                  </button>
-                  <ProductImg color={P.accent} img={p.img} />
-                  <div style={{ fontWeight: 700, fontSize: 13, color: P.textColor, marginTop: 2 }}>{p.name}</div>
-                  <div style={{ display: "flex", gap: 6, alignItems: "baseline", marginTop: 4 }}>
-                    <span style={{ color: P.accent, fontWeight: 800, fontSize: 15 }}>₹{p.price}</span>
-                    {p.mrp > p.price && <span style={{ fontSize: 11.5, color: P.mutedColor, textDecoration: "line-through" }}>₹{p.mrp}</span>}
-                  </div>
-                  {cartQtyForKey(p.id + "|") > 0 ? (
-                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: 8, border: `1px solid ${P.borderColor}`, borderRadius: 8, overflow: "hidden" }}>
-                      <button onClick={() => onChangeQty(p.id + "|", -1)} aria-label="Quantity kam karo" style={{ padding: "6px 12px", minHeight: 32, cursor: "pointer", fontWeight: 800, background: P.isDark ? "#1a1a2e" : T.paper, border: "none", color: P.textColor }}>−</button>
-                      <div style={{ fontWeight: 700, fontFamily: "Inter", fontSize: 13, color: P.textColor }}>{cartQtyForKey(p.id + "|")}</div>
-                      <button onClick={() => onChangeQty(p.id + "|", 1)} aria-label="Quantity badhao" style={{ padding: "6px 12px", minHeight: 32, cursor: "pointer", fontWeight: 800, background: P.isDark ? "#1a1a2e" : T.paper, border: "none", color: P.textColor }}>+</button>
-                    </div>
-                  ) : (
-                    <button className="sads-storebtn" disabled={!p.inStock} onClick={() => onAdd(p, "")} style={{ width: "100%", marginTop: 8, minHeight: 34, background: p.inStock ? P.accent : P.borderColor, color: "#fff", border: "none", borderRadius: 8, fontWeight: 700, fontSize: 12, cursor: p.inStock ? "pointer" : "not-allowed" }}>
-                      {p.inStock ? "Add" : "Out of Stock"}
-                    </button>
-                  )}
-                </div>
-              );
-            })}
+            {filtered.map((p) => (
+              <ModernProductCard
+                key={p.id}
+                p={p}
+                palette={P}
+                wished={!!wishlist.find((w) => w.id === p.id)}
+                onWishlist={onWishlist}
+                onAdd={onAdd}
+                cartQtyForKey={cartQtyForKey}
+                onChangeQty={onChangeQty}
+              />
+            ))}
             {filtered.length === 0 && <p style={{ color: P.mutedColor, gridColumn: "1 / -1" }}>Koi product nahi mila.</p>}
           </div>
         </div>
@@ -2465,8 +2551,11 @@ function UMRippleButton({ children, onClick, style, disabled, ariaLabel, classNa
 }
 
 // ---- Memoized product card — re-renders only when its own product/qty/wishlist state actually changes ----
-const UMProductCard = React.memo(function UMProductCard({ p, wished, qty, palette, surface, border, text, muted, dark, onWishlist, onAdd, onChangeQty, onQuickView }) {
+const UMProductCard = React.memo(function UMProductCard({ p, wished, cartQtyForKey, palette, surface, border, text, muted, dark, onWishlist, onAdd, onChangeQty, onQuickView }) {
+  const [variant, setVariant] = useState(() => defaultProductVariant(p));
   const pct = discountPct(p.mrp, p.price);
+  const key = productVariantKey(p.id, variant);
+  const qty = cartQtyForKey(key);
   return (
     <div className="um-card" style={{ background: surface, border: `1px solid ${border}`, padding: 12, position: "relative" }}>
       {pct > 0 && (
@@ -2486,14 +2575,15 @@ const UMProductCard = React.memo(function UMProductCard({ p, wished, qty, palett
         <span style={{ color: palette.secondary, fontWeight: 800, fontSize: 15 }}>₹{p.price}</span>
         {p.mrp > p.price && <span style={{ fontSize: 11.5, color: muted, textDecoration: "line-through" }}>₹{p.mrp}</span>}
       </div>
+      <VariantSelectors product={p} value={variant} onChange={setVariant} accent={palette.secondary} border={border} text={text} background={surface} compact />
       {qty > 0 ? (
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: 8, border: `1px solid ${border}`, borderRadius: 10, overflow: "hidden" }}>
-          <button onClick={() => onChangeQty(p.id + "|", -1)} aria-label="Quantity kam karo" className="um-tap" style={{ padding: "6px 12px", minHeight: 32, cursor: "pointer", fontWeight: 800, background: "transparent", border: "none", color: text }}>−</button>
+          <button onClick={() => onChangeQty(key, -1)} aria-label="Quantity kam karo" className="um-tap" style={{ padding: "6px 12px", minHeight: 32, cursor: "pointer", fontWeight: 800, background: "transparent", border: "none", color: text }}>−</button>
           <div style={{ fontWeight: 700, fontFamily: "Inter", fontSize: 13, color: text }}>{qty}</div>
-          <button onClick={() => onChangeQty(p.id + "|", 1)} aria-label="Quantity badhao" className="um-tap" style={{ padding: "6px 12px", minHeight: 32, cursor: "pointer", fontWeight: 800, background: "transparent", border: "none", color: text }}>+</button>
+          <button onClick={() => onChangeQty(key, 1)} aria-label="Quantity badhao" className="um-tap" style={{ padding: "6px 12px", minHeight: 32, cursor: "pointer", fontWeight: 800, background: "transparent", border: "none", color: text }}>+</button>
         </div>
       ) : (
-        <UMRippleButton ariaLabel={p.inStock ? "Add to cart" : "Out of stock"} disabled={!p.inStock} onClick={() => onAdd(p, "")} style={{ width: "100%", marginTop: 8, minHeight: 36, background: p.inStock ? palette.primary : border, color: "#fff", border: "none", borderRadius: 10, fontWeight: 700, fontSize: 12, cursor: p.inStock ? "pointer" : "not-allowed" }}>
+        <UMRippleButton ariaLabel={p.inStock ? "Add to cart" : "Out of stock"} disabled={!p.inStock} onClick={() => onAdd(p, variant)} style={{ width: "100%", marginTop: 8, minHeight: 36, background: p.inStock ? palette.primary : border, color: "#fff", border: "none", borderRadius: 10, fontWeight: 700, fontSize: 12, cursor: p.inStock ? "pointer" : "not-allowed" }}>
           {p.inStock ? "Add to Cart" : "Out of Stock"}
         </UMRippleButton>
       )}
@@ -2506,6 +2596,7 @@ function UniversalModernBody({ store, cart, wishlist, onBack, onAdd, onWishlist,
   const [dark, setDark] = useState(false);
   const [showSearch, setShowSearch] = useState(false);
   const [quickView, setQuickView] = useState(null);
+  const [quickViewVariant, setQuickViewVariant] = useState({});
   const [visibleCount, setVisibleCount] = useState(UM_FEATURE_CONFIG.pageSize);
   const [loadingMore, setLoadingMore] = useState(false);
   const [igPosts, setIgPosts] = useState([]);
@@ -2567,9 +2658,9 @@ function UniversalModernBody({ store, cart, wishlist, onBack, onAdd, onWishlist,
   const visibleProducts = useMemo(() => filtered.slice(0, visibleCount), [filtered, visibleCount]);
   const heroImage = store.bannerImg || getHeroImage(store.categories[0]); // owner's own banner wins; otherwise hero-config, else the gradient fallback below
 
-  const handleAdd = useCallback((p) => onAdd(p, ""), [onAdd]);
+  const handleAdd = useCallback((p, variant) => onAdd(p, variant), [onAdd]);
   const handleWishlist = useCallback((p) => onWishlist(p), [onWishlist]);
-  const handleQuickView = useCallback((p) => setQuickView(p), []);
+  const handleQuickView = useCallback((p) => { setQuickView(p); setQuickViewVariant(defaultProductVariant(p)); }, []);
 
   const submitNewsletter = useCallback((e) => {
     e.preventDefault();
@@ -2713,7 +2804,7 @@ function UniversalModernBody({ store, cart, wishlist, onBack, onAdd, onWishlist,
                 key={p.id}
                 p={p}
                 wished={!!wishlist.find((w) => w.id === p.id)}
-                qty={cartQtyForKey(p.id + "|")}
+                cartQtyForKey={cartQtyForKey}
                 palette={palette} surface={surface} border={border} text={text} muted={muted} dark={dark}
                 onWishlist={handleWishlist} onAdd={handleAdd} onChangeQty={onChangeQty} onQuickView={handleQuickView}
               />
@@ -2824,12 +2915,8 @@ function UniversalModernBody({ store, cart, wishlist, onBack, onAdd, onWishlist,
               <span style={{ color: palette.secondary, fontWeight: 800, fontSize: 18 }}>₹{quickView.price}</span>
               {quickView.mrp > quickView.price && <span style={{ fontSize: 13, color: muted, textDecoration: "line-through" }}>₹{quickView.mrp}</span>}
             </div>
-            {quickView.sizes && quickView.sizes.length > 0 && (
-              <div style={{ display: "flex", gap: 6, marginTop: 10, flexWrap: "wrap" }}>
-                {quickView.sizes.map((s) => <span key={s} style={{ border: `1px solid ${border}`, borderRadius: 8, padding: "4px 10px", fontSize: 11.5, color: text }}>{s}</span>)}
-              </div>
-            )}
-            <button className="um-tap" disabled={!quickView.inStock} onClick={() => { onAdd(quickView, ""); setQuickView(null); }} style={{ width: "100%", marginTop: 16, minHeight: 44, background: quickView.inStock ? palette.primary : border, color: "#fff", border: "none", borderRadius: 12, fontWeight: 700, fontSize: 13.5, cursor: quickView.inStock ? "pointer" : "not-allowed" }}>
+            <VariantSelectors product={quickView} value={quickViewVariant} onChange={setQuickViewVariant} accent={palette.secondary} border={border} text={text} background={surface} />
+            <button className="um-tap" disabled={!quickView.inStock} onClick={() => { onAdd(quickView, quickViewVariant); setQuickView(null); }} style={{ width: "100%", marginTop: 16, minHeight: 44, background: quickView.inStock ? palette.primary : border, color: "#fff", border: "none", borderRadius: 12, fontWeight: 700, fontSize: 13.5, cursor: quickView.inStock ? "pointer" : "not-allowed" }}>
               {quickView.inStock ? "Add to Cart" : "Out of Stock"}
             </button>
           </div>
@@ -3129,7 +3216,7 @@ function Storefront({ store, cart, wishlist, onBack, onAdd, onChangeQty, onRemov
                 <div style={{ width: 50, height: 50, borderRadius: 8, background: `${store.color}33`, flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center" }}>🛍️</div>
                 <div style={{ flex: 1 }}>
                   <div style={{ fontWeight: 700, fontFamily: "Inter", fontSize: 14 }}>{i.name}</div>
-                  {i.size && <div style={{ fontSize: 12, opacity: 0.6 }}>{i.size}</div>}
+                  {productVariantLabel(i) && <div style={{ fontSize: 12, opacity: 0.6 }}>{productVariantLabel(i)}</div>}
                   <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 6 }}>
                     <button onClick={() => onChangeQty(i.key, -1)} aria-label="Quantity kam karo" style={{ cursor: "pointer", border: `1.5px solid ${T.ink}55`, background: "transparent", borderRadius: 6, width: 32, height: 32, textAlign: "center", fontWeight: 700 }}>−</button>
                     <span style={{ fontWeight: 600, fontSize: 13 }}>{i.qty}</span>
