@@ -76,6 +76,9 @@ This pushes `firestore.rules` and `storage.rules` — they're written so that:
 - The landing page includes a professional template chooser with category
   filters, live storefront previews, desktop/mobile preview modes, and
   one-click template selection during store signup.
+- The seller product form includes a no-cost offline **Free AI Assistant**
+  that drafts a description, tags, and WhatsApp marketing copy without an
+  API key or recurring AI charge.
 - The Super Admin (matched by email) can update any store — that's how
   plan activation / blocking / trial extension works.
 

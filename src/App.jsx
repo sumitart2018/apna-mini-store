@@ -205,6 +205,27 @@ function productVariantLabel(variant) {
   ].filter(Boolean).join(" • ");
 }
 
+// Free, offline product helper. It intentionally uses no API key or network
+// call, so a seller can generate a useful first draft without AI billing.
+const FREE_PRODUCT_HINTS = [
+  { words: ["shirt", "tshirt", "kurti", "dress", "saree", "jeans", "top", "fashion", "jacket"], category: "Fashion", adjective: "stylish", tags: ["fashion", "new-arrival", "best-seller"] },
+  { words: ["mobile", "phone", "charger", "earphone", "headphone", "laptop", "speaker", "watch", "gadget"], category: "Electronics", adjective: "smart aur reliable", tags: ["electronics", "latest", "value-deal"] },
+  { words: ["rice", "atta", "dal", "masala", "grocery", "oil", "biscuit", "snack", "food"], category: "Grocery", adjective: "fresh aur daily-use", tags: ["grocery", "daily-use", "value-pack"] },
+  { words: ["soap", "cream", "serum", "makeup", "lipstick", "shampoo", "beauty", "perfume"], category: "Beauty", adjective: "premium aur gentle", tags: ["beauty", "self-care", "trending"] },
+  { words: ["chair", "table", "decor", "cushion", "lamp", "home", "kitchen", "bottle"], category: "Home", adjective: "useful aur elegant", tags: ["home", "lifestyle", "must-have"] },
+];
+
+function generateFreeProductSuggestions({ name, category, price }) {
+  const text = `${name} ${category || ""}`.toLowerCase();
+  const hint = FREE_PRODUCT_HINTS.find((item) => item.words.some((word) => text.includes(word)));
+  const productType = category || hint?.category || "daily-use";
+  const adjective = hint?.adjective || "quality aur useful";
+  const tags = Array.from(new Set([...(hint?.tags || []), "trusted-quality", "shop-now"]));
+  const description = `${name} — ${adjective} ${productType.toLowerCase()} product, daily use ke liye perfect. Behtar quality, attractive price${price ? ` aur sirf ₹${price} mein great value` : ""}. Aaj hi order karein.`;
+  const whatsappText = `🛍️ ${name}\n\n${description}\n\n✅ Genuine quality\n📦 Fast WhatsApp order\n💬 Order ke liye message karein.`;
+  return { description, tags, whatsappText, suggestedCategory: hint?.category || "" };
+}
+
 function VariantSelectors({ product, value, onChange, accent = T.ink, border = `${T.ink}33`, text = T.ink, background = "transparent", compact = false }) {
   const options = productVariantOptions(product);
   const fields = [
@@ -1773,7 +1794,9 @@ function Dashboard({ store, onAddProduct, onUpdateProduct, onDeleteProduct, onAd
   const orders = store.orders || [];
   const [orderFilter, setOrderFilter] = useState("All");
   const [newCat, setNewCat] = useState("");
-  const [np, setNp] = useState({ name: "", price: "", mrp: "", category: store.categories[0] || "", inStock: true, sizes: "", colors: "", weights: "", img: "" });
+  const [np, setNp] = useState({ name: "", price: "", mrp: "", category: store.categories[0] || "", inStock: true, sizes: "", colors: "", weights: "", img: "", description: "", tags: "" });
+  const [assistantMessage, setAssistantMessage] = useState("");
+  const [assistantStatus, setAssistantStatus] = useState("");
   const [editingId, setEditingId] = useState(null);
   const [npErrors, setNpErrors] = useState({});
   const [settings, setSettings] = useState({ minOrderValue: store.minOrderValue || 0, freeShippingThreshold: store.freeShippingThreshold || 0, shippingFee: store.shippingFee || 0, gstPercent: store.gstPercent || 0 });
@@ -1803,15 +1826,39 @@ function Dashboard({ store, onAddProduct, onUpdateProduct, onDeleteProduct, onAd
   };
 
   const resetProductForm = () => {
-    setNp({ name: "", price: "", mrp: "", category: store.categories[0] || "", inStock: true, sizes: "", colors: "", weights: "", img: "" });
+    setNp({ name: "", price: "", mrp: "", category: store.categories[0] || "", inStock: true, sizes: "", colors: "", weights: "", img: "", description: "", tags: "" });
+    setAssistantMessage("");
+    setAssistantStatus("");
     setEditingId(null);
     setNpErrors({});
   };
 
   const startEditProduct = (p) => {
-    setNp({ name: p.name, price: String(p.price), mrp: p.mrp ? String(p.mrp) : "", category: p.category || "", inStock: p.inStock, sizes: (p.sizes || []).join(", "), colors: (p.colors || []).join(", "), weights: (p.weights || []).join(", "), img: p.img || "" });
+    setNp({ name: p.name, price: String(p.price), mrp: p.mrp ? String(p.mrp) : "", category: p.category || "", inStock: p.inStock, sizes: (p.sizes || []).join(", "), colors: (p.colors || []).join(", "), weights: (p.weights || []).join(", "), img: p.img || "", description: p.description || "", tags: (p.tags || []).join(", ") });
+    setAssistantMessage("");
+    setAssistantStatus("");
     setEditingId(p.id);
     setNpErrors({});
+  };
+
+  const generateProductSuggestions = () => {
+    if (!np.name.trim()) {
+      setNpErrors((prev) => ({ ...prev, name: "Pehle product naam daalo" }));
+      return;
+    }
+    const suggestion = generateFreeProductSuggestions(np);
+    const matchingCategory = !np.category && suggestion.suggestedCategory
+      ? store.categories.find((category) => category.toLowerCase() === suggestion.suggestedCategory.toLowerCase()) || ""
+      : np.category;
+    setNp((prev) => ({ ...prev, description: suggestion.description, tags: suggestion.tags.join(", "), category: matchingCategory || prev.category }));
+    setAssistantMessage(suggestion.whatsappText);
+    setAssistantStatus("✅ Free suggestion ready — aap text ko edit bhi kar sakte ho");
+  };
+
+  const copyAssistantMessage = async () => {
+    const copied = await copyText(assistantMessage);
+    setAssistantStatus(copied ? "✅ WhatsApp text copy ho gaya" : "Text copy nahi hua");
+    setTimeout(() => setAssistantStatus(""), 2200);
   };
 
   const submitProduct = () => {
@@ -1822,7 +1869,7 @@ function Dashboard({ store, onAddProduct, onUpdateProduct, onDeleteProduct, onAd
     if (Object.keys(errs).length) { setNpErrors(errs); return; }
 
     const toOptions = (value) => value.split(",").map((item) => item.trim()).filter(Boolean);
-    const payload = { name: np.name.trim(), price: Number(np.price), mrp: np.mrp ? Number(np.mrp) : 0, category: np.category, inStock: np.inStock, sizes: toOptions(np.sizes), colors: toOptions(np.colors), weights: toOptions(np.weights), img: np.img };
+    const payload = { name: np.name.trim(), price: Number(np.price), mrp: np.mrp ? Number(np.mrp) : 0, category: np.category, inStock: np.inStock, sizes: toOptions(np.sizes), colors: toOptions(np.colors), weights: toOptions(np.weights), img: np.img, description: np.description.trim(), tags: toOptions(np.tags) };
     if (editingId) onUpdateProduct(editingId, payload);
     else onAddProduct(payload);
     resetProductForm();
@@ -2096,6 +2143,27 @@ function Dashboard({ store, onAddProduct, onUpdateProduct, onDeleteProduct, onAd
                   {npErrors.mrp && <div style={{ color: T.red, fontSize: 12, marginTop: 4 }}>{npErrors.mrp}</div>}
                 </div>
               </div>
+              <div style={{ background: "#ECFDF5", border: "1px solid #A7F3D0", borderRadius: 10, padding: 12 }}>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
+                  <div>
+                    <div style={{ color: "#047857", fontWeight: 800, fontSize: 13 }}>✨ Free AI Assistant</div>
+                    <div style={{ color: "#065F46", fontSize: 11.5, marginTop: 3 }}>API key nahi chahiye — description, tags aur WhatsApp text banega.</div>
+                  </div>
+                  <button type="button" onClick={generateProductSuggestions} style={{ minHeight: 38, padding: "8px 12px", borderRadius: 8, border: "1px solid #10B981", background: "#fff", color: "#047857", fontFamily: "Inter", fontSize: 12, fontWeight: 800, cursor: "pointer" }}>
+                    Suggest Karo
+                  </button>
+                </div>
+                {assistantStatus && <div style={{ color: "#047857", fontSize: 11.5, marginTop: 8, fontWeight: 700 }}>{assistantStatus}</div>}
+                {assistantMessage && (
+                  <div style={{ marginTop: 10, background: "#fff", border: "1px solid #D1FAE5", borderRadius: 8, padding: 10 }}>
+                    <div style={{ color: "#065F46", fontSize: 11, fontWeight: 800, marginBottom: 4 }}>WhatsApp Marketing Text</div>
+                    <div style={{ color: T.ink, fontSize: 12, whiteSpace: "pre-wrap", lineHeight: 1.5 }}>{assistantMessage}</div>
+                    <button type="button" onClick={copyAssistantMessage} style={{ marginTop: 7, minHeight: 32, padding: "5px 9px", borderRadius: 6, border: "1px solid #A7F3D0", background: "#ECFDF5", color: "#047857", fontSize: 11, fontWeight: 700, cursor: "pointer" }}>📋 Copy Text</button>
+                  </div>
+                )}
+              </div>
+              <textarea placeholder="Product description (optional)" value={np.description} onChange={(e) => setNp({ ...np, description: e.target.value })} rows={3} style={{ padding: "10px 12px", borderRadius: 8, border: `2px solid ${T.ink}22`, fontFamily: "Inter", resize: "vertical" }} />
+              <input placeholder="Tags (comma se, e.g. new-arrival, best-seller) — optional" value={np.tags} onChange={(e) => setNp({ ...np, tags: e.target.value })} style={{ padding: "10px 12px", borderRadius: 8, border: `2px solid ${T.ink}22`, fontFamily: "Inter" }} />
               <select value={np.category} onChange={(e) => setNp({ ...np, category: e.target.value })} style={{ padding: "10px 12px", minHeight: 44, borderRadius: 8, border: `2px solid ${T.ink}22`, fontFamily: "Inter" }}>
                 <option value="">Category chuno</option>
                 {store.categories.map((c) => <option key={c} value={c}>{c}</option>)}
@@ -2124,6 +2192,8 @@ function Dashboard({ store, onAddProduct, onUpdateProduct, onDeleteProduct, onAd
                   <span style={{ color: T.magenta, fontWeight: 700 }}>₹{p.price}</span>
                   {p.mrp > p.price && <span style={{ fontSize: 12, opacity: 0.5, textDecoration: "line-through" }}>₹{p.mrp}</span>}
                 </div>
+                {p.description && <div style={{ fontSize: 11.5, color: T.muted, lineHeight: 1.4, marginTop: 5, display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}>{p.description}</div>}
+                {Array.isArray(p.tags) && p.tags.length > 0 && <div style={{ display: "flex", flexWrap: "wrap", gap: 4, marginTop: 6 }}>{p.tags.slice(0, 3).map((tag) => <span key={tag} style={{ background: `${T.mint}12`, color: T.mint, borderRadius: 4, padding: "2px 5px", fontSize: 9.5, fontWeight: 700 }}>{tag}</span>)}</div>}
                 <div style={{ fontSize: 12, opacity: 0.6, marginTop: 2 }}>{p.category} {productVariantLabel({ size: (p.sizes || []).join("/"), color: (p.colors || []).join("/"), weight: (p.weights || []).join("/") }) ? `• ${productVariantLabel({ size: (p.sizes || []).join("/"), color: (p.colors || []).join("/"), weight: (p.weights || []).join("/") })}` : ""}</div>
                 <div style={{ fontSize: 11, marginTop: 4, color: p.inStock ? T.mint : T.red, fontWeight: 700 }}>{p.inStock ? "In Stock" : "Out of Stock"}</div>
                 <div style={{ display: "flex", gap: 12, marginTop: 8 }}>
@@ -2158,6 +2228,7 @@ function ProductCard({ p, store, wished, onWishlist, onAdd, cartQtyForKey, onCha
       </button>
       <ProductImg color={store.color} img={p.img} />
       <div style={{ fontFamily: "Inter", fontWeight: 700, fontSize: 14, color: T.ink }}>{p.name}</div>
+      {p.description && <div style={{ fontSize: 11.5, color: T.muted, lineHeight: 1.4, marginTop: 4, display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}>{p.description}</div>}
       <div style={{ fontSize: 11, marginTop: 3, color: p.inStock ? T.mint : T.red, fontWeight: 700 }}>
         {p.inStock ? "● In Stock" : "● Out of Stock"}
       </div>
@@ -2193,6 +2264,7 @@ function ModernProductCard({ p, palette, wished, onWishlist, onAdd, cartQtyForKe
       </button>
       <ProductImg color={palette.accent} img={p.img} />
       <div style={{ fontWeight: 700, fontSize: 13, color: palette.textColor, marginTop: 2 }}>{p.name}</div>
+      {p.description && <div style={{ fontSize: 10.5, color: palette.mutedColor, lineHeight: 1.35, marginTop: 3, display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}>{p.description}</div>}
       <div style={{ display: "flex", gap: 6, alignItems: "baseline", marginTop: 4 }}>
         <span style={{ color: palette.accent, fontWeight: 800, fontSize: 15 }}>₹{p.price}</span>
         {p.mrp > p.price && <span style={{ fontSize: 11.5, color: palette.mutedColor, textDecoration: "line-through" }}>₹{p.mrp}</span>}
@@ -2703,6 +2775,7 @@ const UMProductCard = React.memo(function UMProductCard({ p, wished, cartQtyForK
         <Eye size={12} /> Quick View
       </button>
       <div style={{ fontWeight: 700, fontSize: 13, color: text, marginTop: 4 }}>{p.name}</div>
+      {p.description && <div style={{ fontSize: 10.5, color: muted, lineHeight: 1.35, marginTop: 3, display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}>{p.description}</div>}
       <div style={{ display: "flex", gap: 6, alignItems: "baseline", marginTop: 4 }}>
         <span style={{ color: palette.secondary, fontWeight: 800, fontSize: 15 }}>₹{p.price}</span>
         {p.mrp > p.price && <span style={{ fontSize: 11.5, color: muted, textDecoration: "line-through" }}>₹{p.mrp}</span>}
@@ -3116,7 +3189,10 @@ function Storefront({ store, cart, wishlist, onBack, onAdd, onChangeQty, onRemov
   // not on every render (e.g. when the cart drawer opens/closes).
   const filtered = useMemo(() => {
     let list = filter === "All" ? store.products : store.products.filter((p) => p.category === filter);
-    if (search.trim()) list = list.filter((p) => p.name.toLowerCase().includes(search.toLowerCase()));
+    if (search.trim()) {
+      const query = search.toLowerCase();
+      list = list.filter((p) => [p.name, p.description, ...(p.tags || [])].filter(Boolean).join(" ").toLowerCase().includes(query));
+    }
     if (sort === "low") list = [...list].sort((a, b) => a.price - b.price);
     if (sort === "high") list = [...list].sort((a, b) => b.price - a.price);
     return list;
