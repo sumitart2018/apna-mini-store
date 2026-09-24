@@ -70,6 +70,9 @@ This pushes `firestore.rules` and `storage.rules` — they're written so that:
 - Only a store's own owner can **write** to their own store/products.
 - Customers can **create a validated order** without logging in (checkout stays
   anonymous), but only the store owner can read it or change its status.
+- Products support optional **size, color, and weight variants**; customers
+  choose the variant before adding an item to the cart and the selection is
+  included in the WhatsApp message and seller order dashboard.
 - The Super Admin (matched by email) can update any store — that's how
   plan activation / blocking / trial extension works.
 
