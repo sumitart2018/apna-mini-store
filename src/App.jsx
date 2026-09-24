@@ -432,6 +432,7 @@ export default function App() {
   const [view, setView] = useState("directory");
   const [activeStoreId, setActiveStoreId] = useState(null);
   const [toast, setToast] = useState("");
+  const [selectedTheme, setSelectedTheme] = useState("classic");
   const [cart, setCart] = useState([]);
   const [wishlist, setWishlist] = useState([]);
   const [showCart, setShowCart] = useState(false);
@@ -787,8 +788,8 @@ export default function App() {
         <TopBar onHome={() => setView("directory")} session={session} onDashboard={() => setView("dashboard")} onLogout={() => { signOutUser(); setView("directory"); }} isSuperAdmin={isSuperAdmin} onSuperAdminLogout={() => { signOutUser(); setView("directory"); }} />
       )}
 
-      {view === "directory" && <Directory stores={stores} onOpen={openStore} onCreate={() => setView("signup")} onLogin={() => setView("login")} onSuperAdmin={() => setView("superadmin-login")} />}
-      {view === "signup" && <SignupForm onSubmit={createStore} onLogin={() => setView("login")} />}
+      {view === "directory" && <Directory stores={stores} onOpen={openStore} onCreate={(theme = "classic") => { setSelectedTheme(theme); setView("signup"); }} onLogin={() => setView("login")} onSuperAdmin={() => setView("superadmin-login")} />}
+      {view === "signup" && <SignupForm initialTheme={selectedTheme} onSubmit={createStore} onLogin={() => setView("login")} />}
       {view === "login" && (
   <LoginForm
     onSubmit={login}
@@ -897,6 +898,9 @@ function FAQItem({ item, open, onClick }) {
 function Directory({ stores, onOpen, onCreate, onLogin, onSuperAdmin }) {
   const [openFaq, setOpenFaq] = useState(0);
   const [testiIndex, setTestiIndex] = useState(0);
+  const [templateCategory, setTemplateCategory] = useState("All");
+  const [previewTemplate, setPreviewTemplate] = useState(null);
+  const [previewViewport, setPreviewViewport] = useState("desktop");
   const TESTIMONIALS = [
     { quote: "Bahut easy platform hai, 2 minute mein store ban gaya aur orders aane bhi start ho gaye!", role: "Fashion Store Owner" },
     { quote: "WhatsApp integration best hai, sab kuch easy ho gaya. Highly recommended!", role: "Electronics Seller" },
@@ -905,6 +909,15 @@ function Directory({ stores, onOpen, onCreate, onLogin, onSuperAdmin }) {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const totalProducts = stores.reduce((sum, s) => sum + s.products.length, 0);
   const totalOrders = stores.reduce((sum, s) => sum + (s.orders ? s.orders.length : 0), 0);
+  const visibleTemplates = useMemo(
+    () => TEMPLATE_CATALOG.filter((template) => templateCategory === "All" || template.category === templateCategory),
+    [templateCategory]
+  );
+
+  const openTemplatePreview = (template) => {
+    setPreviewTemplate(template);
+    setPreviewViewport("desktop");
+  };
 
   useEffect(() => {
     if (!mobileMenuOpen) return;
@@ -912,7 +925,13 @@ function Directory({ stores, onOpen, onCreate, onLogin, onSuperAdmin }) {
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
   }, [mobileMenuOpen]);
-  useBodyScrollLock(mobileMenuOpen);
+  useEffect(() => {
+    if (!previewTemplate) return;
+    const onKey = (event) => { if (event.key === "Escape") setPreviewTemplate(null); };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [previewTemplate]);
+  useBodyScrollLock(Boolean(mobileMenuOpen || previewTemplate));
 
   return (
     <div style={{ background: DK.bg, color: DK.text, fontFamily: "Inter" }}>
@@ -1320,33 +1339,75 @@ function Directory({ stores, onOpen, onCreate, onLogin, onSuperAdmin }) {
           <span style={{ display: "inline-flex", alignItems: "center", gap: 6, background: DK.card, border: `1px solid ${DK.cardBorder}`, borderRadius: 20, padding: "6px 14px", fontSize: 12, fontWeight: 600, color: DK.greenSoft }}>🎨 Beautiful Templates</span>
         </div>
         <h2 className="sads-h2" style={{ textAlign: "center", marginBottom: 28 }}>Choose Your Perfect <span style={{ color: DK.green }}>Template</span></h2>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px,1fr))", gap: 16, maxWidth: 920, margin: "0 auto" }}>
-          <GlassCard style={{ padding: 0, overflow: "hidden", cursor: "pointer" }}>
-            <button onClick={onCreate} style={{ background: "transparent", border: "none", padding: 0, width: "100%", textAlign: "left", cursor: "pointer" }}>
-              <div style={{ height: 110, background: `linear-gradient(135deg, ${DK.green}22, ${DK.greenSoft}11)`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 32 }}>🛍️</div>
-              <div style={{ padding: 14 }}>
-                <div style={{ fontWeight: 700, fontSize: 14, color: DK.text }}>Classic</div>
-                <div style={{ fontSize: 11.5, color: DK.muted, marginTop: 4 }}>Simple, professional — Yuvi Fashion jaisa look</div>
-              </div>
+        <div style={{ display: "flex", justifyContent: "center", gap: 8, flexWrap: "wrap", marginBottom: 22 }} role="tablist" aria-label="Template categories">
+          {TEMPLATE_CATEGORIES.map((category) => (
+            <button key={category} role="tab" aria-selected={templateCategory === category} onClick={() => setTemplateCategory(category)} style={{ minHeight: 38, padding: "8px 14px", borderRadius: 20, border: `1px solid ${templateCategory === category ? DK.green : DK.cardBorder}`, background: templateCategory === category ? DK.green : DK.card, color: templateCategory === category ? "#fff" : DK.muted, fontFamily: "Inter", fontSize: 12.5, fontWeight: 700, cursor: "pointer" }}>
+              {category}
             </button>
-          </GlassCard>
-          {["modern", "aurora", "luxe", "freshmarket", "fashionstudio", "neoncommerce", "universalmodern"].map((key) => {
-            const P = getThemePreset(key);
-            return (
-              <GlassCard key={key} style={{ padding: 0, overflow: "hidden", cursor: "pointer" }}>
-                <button onClick={onCreate} style={{ background: "transparent", border: "none", padding: 0, width: "100%", textAlign: "left", cursor: "pointer" }}>
-                  <div style={{ height: 110, background: `linear-gradient(135deg, ${P.bannerFrom}33, ${P.bannerTo}22)`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 32 }}>{THEME_ICONS[key]}</div>
-                  <div style={{ padding: 14 }}>
-                    <div style={{ fontWeight: 700, fontSize: 14, color: DK.text }}>{P.label}</div>
-                    <div style={{ fontSize: 11.5, color: DK.muted, marginTop: 4 }}>{THEME_DESCS[key]}</div>
-                  </div>
-                </button>
-              </GlassCard>
-            );
-          })}
+          ))}
         </div>
-        <p style={{ textAlign: "center", color: DK.muted, fontSize: 12.5, marginTop: 18 }}>Store banate waqt in 7 themes mein se koi bhi choose kar sakte ho — baad mein bhi badal sakte ho.</p>
+
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px,1fr))", gap: 18, maxWidth: 1040, margin: "0 auto" }}>
+          {visibleTemplates.map((template) => (
+            <GlassCard key={template.key} style={{ padding: 0, overflow: "hidden", display: "flex", flexDirection: "column" }}>
+              <div style={{ position: "relative", padding: 10, background: "#F8FAFC", borderBottom: `1px solid ${DK.cardBorder}` }}>
+                <TemplatePreview template={template} compact />
+                {template.badge && <span style={{ position: "absolute", top: 18, left: 18, background: DK.yellow, color: "#6B4500", borderRadius: 20, padding: "4px 8px", fontSize: 10, fontWeight: 800 }}>{template.badge}</span>}
+              </div>
+              <div style={{ padding: 16, display: "flex", flexDirection: "column", flex: 1 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8 }}>
+                  <div>
+                    <div style={{ fontWeight: 800, fontSize: 15, color: DK.text }}>{template.icon} {template.name}</div>
+                    <div style={{ fontSize: 11.5, color: DK.muted, marginTop: 5, lineHeight: 1.45 }}>{template.desc}</div>
+                  </div>
+                  <span style={{ flexShrink: 0, color: DK.green, background: `${DK.green}12`, borderRadius: 20, padding: "4px 7px", fontSize: 10, fontWeight: 800 }}>{template.category}</span>
+                </div>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 5, marginTop: 12 }}>
+                  {template.tags.map((tag) => <span key={tag} style={{ color: DK.muted, background: "#F3F4F6", borderRadius: 5, padding: "3px 6px", fontSize: 10 }}>{tag}</span>)}
+                </div>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1.25fr", gap: 8, marginTop: "auto", paddingTop: 16 }}>
+                  <button className="sads-btn" onClick={() => openTemplatePreview(template)} style={{ minHeight: 40, display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 5, border: `1px solid ${DK.cardBorder}`, borderRadius: 8, background: "#fff", color: DK.text, fontFamily: "Inter", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
+                    <Eye size={14} /> Preview
+                  </button>
+                  <button className="sads-btn" onClick={() => onCreate(template.key)} style={{ minHeight: 40, border: "none", borderRadius: 8, background: `linear-gradient(135deg, ${DK.green}, ${DK.greenSoft})`, color: "#fff", fontFamily: "Inter", fontSize: 12, fontWeight: 800, cursor: "pointer" }}>
+                    Use This Template →
+                  </button>
+                </div>
+              </div>
+            </GlassCard>
+          ))}
+        </div>
+        <p style={{ textAlign: "center", color: DK.muted, fontSize: 12.5, marginTop: 18 }}>Preview dekho, apni category ka design chuno aur ek click mein wahi template store setup mein apply karo.</p>
       </div>
+
+      {previewTemplate && (
+        <div role="presentation" onClick={() => setPreviewTemplate(null)} style={{ position: "fixed", inset: 0, zIndex: 120, background: "rgba(15,23,42,0.64)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
+          <div role="dialog" aria-modal="true" aria-labelledby="template-preview-title" onClick={(event) => event.stopPropagation()} style={{ width: "min(920px, 100%)", maxHeight: "92vh", overflowY: "auto", background: "#fff", borderRadius: 18, padding: 18, boxShadow: "0 24px 70px rgba(15,23,42,0.3)" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, marginBottom: 14 }}>
+              <div>
+                <div style={{ color: DK.green, fontSize: 11, fontWeight: 800, letterSpacing: "0.06em", textTransform: "uppercase" }}>Live Preview</div>
+                <h3 id="template-preview-title" style={{ margin: "4px 0 0", color: DK.text, fontSize: 21 }}>{previewTemplate.icon} {previewTemplate.name}</h3>
+                <div style={{ color: DK.muted, fontSize: 12.5, marginTop: 4 }}>{previewTemplate.desc}</div>
+              </div>
+              <button onClick={() => setPreviewTemplate(null)} aria-label="Preview band karo" style={{ width: 40, height: 40, borderRadius: 10, border: `1px solid ${DK.cardBorder}`, background: "#fff", color: DK.text, cursor: "pointer", fontSize: 20 }}>×</button>
+            </div>
+            <div style={{ display: "flex", justifyContent: "center", gap: 8, marginBottom: 16 }}>
+              {[{ key: "desktop", label: "Desktop", Icon: Globe }, { key: "mobile", label: "Mobile", Icon: Smartphone }].map(({ key, label, Icon }) => (
+                <button key={key} onClick={() => setPreviewViewport(key)} aria-pressed={previewViewport === key} style={{ minHeight: 40, padding: "8px 13px", display: "inline-flex", alignItems: "center", gap: 6, borderRadius: 9, border: `1px solid ${previewViewport === key ? DK.green : DK.cardBorder}`, background: previewViewport === key ? `${DK.green}10` : "#fff", color: previewViewport === key ? DK.green : DK.muted, fontFamily: "Inter", fontSize: 12.5, fontWeight: 700, cursor: "pointer" }}>
+                  <Icon size={15} /> {label}
+                </button>
+              ))}
+            </div>
+            <div style={{ display: "flex", justifyContent: "center", padding: "6px 0 18px", overflowX: "auto" }}>
+              <TemplatePreview template={previewTemplate} viewport={previewViewport} />
+            </div>
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, flexWrap: "wrap", borderTop: `1px solid ${DK.cardBorder}`, paddingTop: 16 }}>
+              <button onClick={() => setPreviewTemplate(null)} style={{ minHeight: 42, padding: "10px 16px", borderRadius: 8, border: `1px solid ${DK.cardBorder}`, background: "#fff", color: DK.text, fontFamily: "Inter", fontWeight: 700, cursor: "pointer" }}>Baad mein</button>
+              <button onClick={() => { setPreviewTemplate(null); onCreate(previewTemplate.key); }} className="sads-btn" style={{ minHeight: 42, padding: "10px 18px", borderRadius: 8, border: "none", background: `linear-gradient(135deg, ${DK.green}, ${DK.greenSoft})`, color: "#fff", fontFamily: "Inter", fontWeight: 800, cursor: "pointer" }}>Use This Template →</button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* PRICING */}
       <div id="sads-pricing" className="sads-px" style={{ maxWidth: 1180, margin: "0 auto", padding: "0 0 60px" }}>
@@ -1590,8 +1651,8 @@ function ThemePicker({ value, onChange }) {
   );
 }
 
-function SignupForm({ onSubmit, onLogin }) {
-  const [f, setF] = useState({ name: "", tagline: "", whatsapp: "", email: "", password: "", color: T.marigold, theme: "classic" });
+function SignupForm({ onSubmit, onLogin, initialTheme = "classic" }) {
+  const [f, setF] = useState(() => ({ name: "", tagline: "", whatsapp: "", email: "", password: "", color: T.marigold, theme: initialTheme }));
   const [touched, setTouched] = useState({});
   const set = (k) => (e) => setF({ ...f, [k]: e.target.value });
   const colors = [T.marigold, T.magenta, T.mint, "#3D5A80", "#8338EC"];
@@ -2165,6 +2226,77 @@ const THEME_PRESETS = {
 };
 function getThemePreset(theme) {
   return THEME_PRESETS[theme] || THEME_PRESETS.modern;
+}
+
+const TEMPLATE_CATEGORIES = ["All", "General", "Fashion", "Grocery", "Premium", "Electronics"];
+const TEMPLATE_CATALOG = [
+  { key: "classic", name: "Classic", category: "General", icon: "🛍️", badge: "Easy Start", desc: "Simple, professional aur WhatsApp orders ke liye perfect.", tags: ["Simple", "WhatsApp", "Fast"] },
+  { key: "modern", name: "Modern", category: "Fashion", icon: "✨", badge: "Popular", desc: "App jaisa clean layout, fashion aur lifestyle stores ke liye.", tags: ["Clean", "Mobile-first", "Fashion"] },
+  { key: "aurora", name: "Aurora", category: "Electronics", icon: "🌌", desc: "Blue gradient style jo electronics aur tech products ko highlight kare.", tags: ["Tech", "Gradient", "Modern"] },
+  { key: "luxe", name: "Luxe", category: "Premium", icon: "👑", desc: "Dark & gold premium feel, jewellery aur luxury products ke liye.", tags: ["Luxury", "Premium", "Dark"] },
+  { key: "freshmarket", name: "Fresh Market", category: "Grocery", icon: "🥦", desc: "Fresh green design, kirana, food aur daily needs stores ke liye.", tags: ["Grocery", "Fresh", "Local"] },
+  { key: "fashionstudio", name: "Fashion Studio", category: "Fashion", icon: "👗", desc: "Minimal elegant look jo clothing aur boutique brands ko suit kare.", tags: ["Boutique", "Elegant", "Minimal"] },
+  { key: "neoncommerce", name: "Neon Commerce", category: "Electronics", icon: "⚡", desc: "Dark neon glow style, gaming aur gadgets ke liye eye-catching.", tags: ["Gaming", "Dark", "Bold"] },
+  { key: "universalmodern", name: "Universal Modern", category: "General", icon: "💎", badge: "Recommended", desc: "Logo ke colors se auto-branding ke saath ultra-premium design.", tags: ["Auto-brand", "All stores", "Premium"] },
+];
+
+const TEMPLATE_DEMO_PRODUCTS = [
+  { name: "New Collection", price: "499", icon: "🛍️" },
+  { name: "Best Seller", price: "699", icon: "⭐" },
+  { name: "Special Pick", price: "399", icon: "🎁" },
+];
+
+function TemplatePreview({ template, viewport = "desktop", compact = false }) {
+  const isClassic = template.key === "classic";
+  const P = isClassic ? {
+    accent: T.marigold,
+    accent2: T.mint,
+    pageBg: "#FFF8EC",
+    cardBg: "#FFFFFF",
+    headerBg: "#FFFFFF",
+    textColor: T.ink,
+    mutedColor: T.muted,
+    borderColor: T.border,
+    bannerFrom: T.marigold,
+    bannerTo: T.mint,
+    isDark: false,
+  } : getThemePreset(template.key);
+  const mobile = viewport === "mobile";
+  const scaleHeight = compact ? 176 : mobile ? 420 : 360;
+  const previewWidth = compact ? "100%" : mobile ? 270 : 620;
+  const textColor = P.textColor;
+  const muted = P.mutedColor;
+  const surface = P.cardBg;
+  return (
+    <div style={{ width: previewWidth, height: scaleHeight, maxWidth: "100%", overflow: "hidden", borderRadius: compact ? 10 : 14, border: `1px solid ${P.borderColor}`, background: P.pageBg, color: textColor, boxShadow: compact ? "none" : "0 10px 28px rgba(15,23,42,0.14)", fontFamily: "Inter", flexShrink: 0 }}>
+      <div style={{ height: compact ? 30 : 42, padding: compact ? "0 9px" : "0 14px", display: "flex", alignItems: "center", justifyContent: "space-between", background: P.headerBg, borderBottom: `1px solid ${P.borderColor}`, fontSize: compact ? 9.5 : 12, fontWeight: 800 }}>
+        <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}><span>{template.icon}</span><span>{template.name} Store</span></span>
+        <span style={{ color: muted, fontSize: compact ? 9 : 11 }}>⌕ &nbsp;♡ &nbsp;🛒</span>
+      </div>
+      <div style={{ margin: compact ? 8 : 14, height: compact ? 55 : 100, borderRadius: compact ? 8 : 12, padding: compact ? 8 : 14, display: "flex", alignItems: "center", justifyContent: "space-between", background: `linear-gradient(135deg, ${P.bannerFrom}, ${P.bannerTo})`, color: "#fff", overflow: "hidden" }}>
+        <div>
+          <div style={{ fontSize: compact ? 7 : 10, opacity: 0.82, marginBottom: 3 }}>WELCOME TO OUR STORE</div>
+          <div style={{ fontSize: compact ? 12 : 18, fontWeight: 800, lineHeight: 1.1 }}>New Collection</div>
+          <div style={{ fontSize: compact ? 7 : 10, opacity: 0.85, marginTop: 4 }}>Shop your favourites today</div>
+        </div>
+        <div style={{ fontSize: compact ? 24 : 42, opacity: 0.9 }}>{template.icon}</div>
+      </div>
+      <div style={{ padding: compact ? "0 8px" : "0 14px" }}>
+        <div style={{ display: "flex", gap: 5, overflow: "hidden", marginBottom: compact ? 7 : 10 }}>
+          {["All", "New", "Popular", "Sale"].map((label, index) => <span key={label} style={{ whiteSpace: "nowrap", background: index === 0 ? P.accent : `${P.accent}12`, color: index === 0 ? "#fff" : textColor, borderRadius: 20, padding: compact ? "3px 7px" : "5px 10px", fontSize: compact ? 7 : 10, fontWeight: 700 }}>{label}</span>)}
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: mobile ? "repeat(2, minmax(0,1fr))" : "repeat(3, minmax(0,1fr))", gap: compact ? 6 : 10 }}>
+          {TEMPLATE_DEMO_PRODUCTS.map((product) => (
+            <div key={product.name} style={{ padding: compact ? 5 : 8, borderRadius: compact ? 7 : 10, background: surface, border: `1px solid ${P.borderColor}`, minWidth: 0 }}>
+              <div style={{ height: compact ? 40 : 64, borderRadius: compact ? 5 : 8, display: "flex", alignItems: "center", justifyContent: "center", background: `${P.accent}15`, fontSize: compact ? 17 : 27 }}>{product.icon}</div>
+              <div style={{ fontSize: compact ? 7.5 : 10.5, fontWeight: 700, marginTop: compact ? 4 : 6, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{product.name}</div>
+              <div style={{ color: P.accent, fontSize: compact ? 8.5 : 11.5, fontWeight: 800, marginTop: 2 }}>₹{product.price}</div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
 }
 
 function ModernStorefrontBody({ store, cart, wishlist, onBack, onAdd, onWishlist, setShowCart, filtered, filter, setFilter, search, setSearch, cartQtyForKey, onChangeQty }) {
