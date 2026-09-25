@@ -82,6 +82,10 @@ This pushes `firestore.rules` and `storage.rules` — they're written so that:
 - The public Live Stores directory stays compact with a featured horizontal
   carousel, active-store filtering, search/category/sort controls, responsive
   mobile layout, and incremental **Load More Stores** pagination.
+- Visitor analytics now shows session-based homepage visitors on the SaaS
+  platform and separate visitor totals in each seller dashboard. It stores no
+  IP address, name, or other visitor identity; publish the updated
+  `firestore.rules` after deployment.
 - The Super Admin (matched by email) can update any store — that's how
   plan activation / blocking / trial extension works.
 
@@ -125,6 +129,7 @@ stores/{uid}                       one doc per seller — doc id = their Firebas
 stores/{uid}/products/{productId}  subcollection (not an array field — keeps a seller
                                     with 100 product photos from ever bloating one document)
 stores/{uid}/orders/{orderId}      subcollection
+analytics/platform                 session-based visits to the main SaaS homepage
 ```
 
 Product/logo/banner photos are compressed client-side and stored as a field

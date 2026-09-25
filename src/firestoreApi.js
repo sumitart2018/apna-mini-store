@@ -33,6 +33,7 @@ import {
   onSnapshot,
   arrayUnion,
   arrayRemove,
+  increment,
   serverTimestamp,
   query,
   orderBy as fsOrderBy,
@@ -180,6 +181,25 @@ export function watchOrdersForStore(storeId, onChange, onError) {
     },
     (err) => { console.error("watchOrdersForStore failed:", err); if (onError) onError(err); }
   );
+}
+
+// The public SaaS homepage keeps one lightweight counter. It is intentionally
+// a page-session count (the UI deduplicates refreshes in the same session),
+// not a promise of unique people or a full marketing analytics system.
+export function watchPlatformAnalytics(onChange, onError) {
+  return onSnapshot(
+    doc(db, "analytics", "platform"),
+    (snap) => onChange(snap.exists() ? snap.data() : {}),
+    (err) => { console.error("watchPlatformAnalytics failed:", err); if (onError) onError(err); }
+  );
+}
+
+export async function trackPlatformVisit() {
+  await setDoc(doc(db, "analytics", "platform"), { visitorCount: increment(1) }, { merge: true });
+}
+
+export async function trackStoreVisit(storeId) {
+  await updateDoc(doc(db, "stores", storeId), { visitorCount: increment(1) });
 }
 
 // ---------- Products ----------

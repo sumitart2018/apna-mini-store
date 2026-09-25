@@ -26,6 +26,16 @@ service cloud.firestore {
               "facebook", "instagram", "youtube", "bannerImg", "logoImg"
             ])
           )
+        )
+        // Public storefront views can only increase the counter by exactly
+        // one. This prevents a visitor from overwriting the store profile or
+        // setting an arbitrary visitor total from the browser.
+        || (
+          request.resource.data.diff(resource.data).affectedKeys().hasOnly(["visitorCount"])
+          && (
+            (!resource.data.keys().hasAny(["visitorCount"]) && request.resource.data.visitorCount == 1)
+            || (resource.data.keys().hasAny(["visitorCount"]) && request.resource.data.visitorCount == resource.data.visitorCount + 1)
+          )
         );
       allow delete: if false;
 
@@ -76,6 +86,19 @@ service cloud.firestore {
     // owning store may read its own orders through the nested rule above.
     match /{path=**}/products/{productId} {
       allow read: if true;
+    }
+
+    // One public, append-by-one counter for visits to the main SaaS homepage.
+    // The client only writes an increment; no visitor identity is stored.
+    match /analytics/{analyticsId} {
+      allow read: if analyticsId == "platform";
+      allow create: if analyticsId == "platform"
+        && request.resource.data.keys().hasOnly(["visitorCount"])
+        && request.resource.data.visitorCount == 1;
+      allow update: if analyticsId == "platform"
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(["visitorCount"])
+        && request.resource.data.visitorCount == resource.data.visitorCount + 1;
+      allow delete: if false;
     }
   }
 }

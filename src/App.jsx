@@ -1,12 +1,13 @@
 import React, { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { ShoppingCart, MessageCircle, Palette, Package, QrCode, BarChart3, ShieldCheck, Smartphone, Users, Boxes, Search, Zap, Menu, X, Facebook, Instagram, Youtube, Heart, Truck, Headphones, User, Phone, MapPin, FileText, Mail, Twitter, ShoppingBag, Shirt, Coffee, KeyRound, Grid3x3, Share2, SlidersHorizontal, Home, Award, Star, ExternalLink, Globe, UtensilsCrossed, Moon, Sun, Sparkles, TrendingUp, Flame, Bell, LogOut, Filter, ArrowUpDown, ChevronLeft, ChevronRight, Store, Ban, CalendarDays, Clock, Hash, TrendingDown, Copy, Lock, Eye, EyeOff, Loader2 } from "lucide-react";
 import {
-  watchAllStores, watchAllProducts, watchOrdersForStore, watchAuthState,
+  watchAllStores, watchAllProducts, watchOrdersForStore, watchPlatformAnalytics, watchAuthState,
   signUpSeller, signInSeller, signOutUser, friendlyAuthError,
   updateStoreProfile, addStoreCategory, removeStoreCategory,
   setStorePlan, setStoreBlocked, setTrialStartedAt,
   createProduct, editProduct, removeProduct,
-  createOrder, setOrderStatus, uploadStoreImage, resetSellerPassword, signInWithGoogle
+  createOrder, setOrderStatus, uploadStoreImage, resetSellerPassword, signInWithGoogle,
+  trackPlatformVisit, trackStoreVisit
 } from "./firestoreApi";
 
 /*
@@ -455,6 +456,7 @@ export default function App() {
   const [storeProfiles, setStoreProfiles] = useState([]);
   const [productsByStore, setProductsByStore] = useState({});
   const [ordersByStore, setOrdersByStore] = useState({});
+  const [platformVisitors, setPlatformVisitors] = useState(0);
   // undefined = auth state not yet resolved, null = logged out, object = logged in
   const [authUser, setAuthUser] = useState(undefined);
   const [view, setView] = useState("directory");
@@ -490,6 +492,9 @@ export default function App() {
     const onErr = (source) => (err) => { setLoadError({ err, source }); setLoading(false); };
     const unsubStores = watchAllStores((data) => { setStoreProfiles(data); setLoading(false); }, onErr("stores"));
     const unsubProducts = watchAllProducts(setProductsByStore, onErr("products"));
+    const unsubPlatformAnalytics = watchPlatformAnalytics((data) => {
+      setPlatformVisitors(Number(data.visitorCount) || 0);
+    });
     const unsubAuth = watchAuthState(setAuthUser);
     // Safety net: if Firestore never calls back at all (wrong project ID,
     // network block, etc.) — neither success nor error — don't hang on
@@ -500,8 +505,26 @@ export default function App() {
         return stillLoading;
       });
     }, 10000);
-    return () => { unsubStores(); unsubProducts(); unsubAuth(); clearTimeout(timeout); };
+    return () => { unsubStores(); unsubProducts(); unsubPlatformAnalytics(); unsubAuth(); clearTimeout(timeout); };
   }, []);
+
+  // Count one visit per browser session for each public surface. This keeps a
+  // refresh from inflating the number while still counting a new session.
+  useEffect(() => {
+    if (view !== "storefront" || !activeStoreId) return;
+    const store = stores.find((item) => item.id === activeStoreId || item.slug === activeStoreId);
+    if (!store || !["active", "trial"].includes(getStoreStatus(store).status)) return;
+    const storeId = store.id;
+    const key = `apna-mini-store:visited:store:${storeId}`;
+    try {
+      if (window.sessionStorage.getItem(key)) return;
+      window.sessionStorage.setItem(key, "1");
+    } catch { /* private browsing can block storage; still try the visit */ }
+    trackStoreVisit(storeId).catch((err) => {
+      console.warn("Store visitor count update failed:", err);
+      try { window.sessionStorage.removeItem(key); } catch { /* ignore */ }
+    });
+  }, [view, activeStoreId, stores]);
 
   // authUser is a real, persisted Firebase Auth session — it survives page
   // reloads on its own, unlike the old in-memory-only `session` state.
@@ -598,6 +621,7 @@ export default function App() {
         shippingFee: 0,
         gstPercent: 0,
         categories: [],
+        visitorCount: 0,
       });
       setView("dashboard");
       flash("Store bana diya! Ab products add karo.");
@@ -816,7 +840,7 @@ export default function App() {
         <TopBar onHome={() => setView("directory")} session={session} onDashboard={() => setView("dashboard")} onLogout={() => { signOutUser(); setView("directory"); }} isSuperAdmin={isSuperAdmin} onSuperAdminLogout={() => { signOutUser(); setView("directory"); }} />
       )}
 
-      {view === "directory" && <Directory stores={stores} onOpen={openStore} onCreate={(theme = "classic") => { setSelectedTheme(theme); setView("signup"); }} onLogin={() => setView("login")} onSuperAdmin={() => setView("superadmin-login")} />}
+      {view === "directory" && <Directory stores={stores} platformVisitors={platformVisitors} onOpen={openStore} onCreate={(theme = "classic") => { setSelectedTheme(theme); setView("signup"); }} onLogin={() => setView("login")} onSuperAdmin={() => setView("superadmin-login")} />}
       {view === "signup" && <SignupForm initialTheme={selectedTheme} onSubmit={createStore} onLogin={() => setView("login")} />}
       {view === "login" && (
   <LoginForm
@@ -827,7 +851,7 @@ export default function App() {
 )}
       {view === "superadmin-login" && <SuperAdminLogin onSubmit={superAdminLogin} onBack={() => setView("directory")} />}
       {view === "superadmin" && isSuperAdmin && (
-        <SuperAdminDashboard stores={stores} onActivate={activatePlan} onBlock={toggleBlockStore} onExtendTrial={extendTrial} onLogout={() => { signOutUser(); setView("directory"); }} onResetPassword={sendResetEmail} />
+        <SuperAdminDashboard stores={stores} platformVisitors={platformVisitors} onActivate={activatePlan} onBlock={toggleBlockStore} onExtendTrial={extendTrial} onLogout={() => { signOutUser(); setView("directory"); }} onResetPassword={sendResetEmail} />
       )}
       {view === "dashboard" && ownerStore && (
         <Dashboard store={ownerStore} onAddProduct={addProduct} onUpdateProduct={updateProduct} onDeleteProduct={deleteProduct} onAddCategory={addCategory} onDeleteCategory={deleteCategory} onUpdateStore={updateOwnerStore} onViewStore={() => openStore(ownerStore.id)} onUpdateOrderStatus={updateOrderStatus} saveState={saveState} />
@@ -950,7 +974,7 @@ function DirectoryStoreCard({ store, onOpen, compact = false }) {
   );
 }
 
-function Directory({ stores, onOpen, onCreate, onLogin, onSuperAdmin }) {
+function Directory({ stores, platformVisitors, onOpen, onCreate, onLogin, onSuperAdmin }) {
   const [openFaq, setOpenFaq] = useState(0);
   const [testiIndex, setTestiIndex] = useState(0);
   const [templateCategory, setTemplateCategory] = useState("All");
@@ -1014,6 +1038,20 @@ function Directory({ stores, onOpen, onCreate, onLogin, onSuperAdmin }) {
     return () => document.removeEventListener("keydown", onKey);
   }, [previewTemplate]);
   useEffect(() => { setStoreLimit(12); }, [storeSearch, storeCategory, storeSort]);
+  useEffect(() => {
+    // A direct mini-store URL briefly renders the directory while Firestore
+    // is loading; do not count that as a SaaS homepage visit.
+    if (requestedStoreRoute().key) return;
+    const key = "apna-mini-store:visited:platform";
+    try {
+      if (window.sessionStorage.getItem(key)) return;
+      window.sessionStorage.setItem(key, "1");
+    } catch { /* private browsing can block storage; still try the visit */ }
+    trackPlatformVisit().catch((err) => {
+      console.warn("Platform visitor count update failed:", err);
+      try { window.sessionStorage.removeItem(key); } catch { /* ignore */ }
+    });
+  }, []);
   useBodyScrollLock(Boolean(mobileMenuOpen || previewTemplate));
 
   return (
@@ -1084,7 +1122,7 @@ function Directory({ stores, onOpen, onCreate, onLogin, onSuperAdmin }) {
 
         /* stats: 2x2 on mobile, 4 across sm+ */
         .sads-stats-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; }
-        @media (min-width: 640px) { .sads-stats-grid { grid-template-columns: repeat(4, 1fr); } }
+        @media (min-width: 640px) { .sads-stats-grid { grid-template-columns: repeat(5, 1fr); } }
 
         /* pricing: stacked mobile, 3 across md+ */
         .sads-pricing-grid { display: grid; grid-template-columns: 1fr; gap: 20px; }
@@ -1331,6 +1369,7 @@ function Directory({ stores, onOpen, onCreate, onLogin, onSuperAdmin }) {
               { label: "Live Stores", value: stores.length, icon: "🏬" },
               { label: "Total Products", value: totalProducts, icon: "📦" },
               { label: "Orders Placed", value: totalOrders, icon: "🛒" },
+              { label: "Total Visitors", value: platformVisitors, icon: "👁️" },
               { label: "Free Trial", value: "7 Din", icon: "⏳" },
             ].map((s) => (
               <div key={s.label} style={{ textAlign: "center", padding: 12 }}>
@@ -2025,6 +2064,23 @@ function Dashboard({ store, onAddProduct, onUpdateProduct, onDeleteProduct, onAd
           {saveState === "error" && <div style={{ fontSize: 11, color: "#F87171", marginTop: 4 }}>Save fail hua — dobara try karo</div>}
         </div>
         <Button variant="primary" onClick={onViewStore}>Live Store Dekho →</Button>
+      </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))", gap: 10, marginBottom: 20 }}>
+        <div style={{ background: T.cream, border: `1px solid ${T.border}`, borderRadius: 10, padding: "12px 14px", display: "flex", alignItems: "center", gap: 10 }}>
+          <Eye size={20} color={T.mint} />
+          <div>
+            <div style={{ fontSize: 11, color: T.muted }}>Total Visitors</div>
+            <div style={{ fontSize: 21, fontWeight: 800, color: T.ink }}>{(Number(store.visitorCount) || 0).toLocaleString("en-IN")}</div>
+          </div>
+        </div>
+        <div style={{ background: T.cream, border: `1px solid ${T.border}`, borderRadius: 10, padding: "12px 14px", display: "flex", alignItems: "center", gap: 10 }}>
+          <ShoppingBag size={20} color={T.marigold} />
+          <div>
+            <div style={{ fontSize: 11, color: T.muted }}>Products</div>
+            <div style={{ fontSize: 21, fontWeight: 800, color: T.ink }}>{store.products.length.toLocaleString("en-IN")}</div>
+          </div>
+        </div>
       </div>
 
       <div style={{ display: "flex", gap: 8, marginBottom: 20, flexWrap: "wrap" }}>
@@ -3726,7 +3782,7 @@ function AdminProgressBar({ status, daysLeft, totalDays }) {
   );
 }
 
-function SuperAdminDashboard({ stores, onActivate, onBlock, onExtendTrial, onLogout, onResetPassword }) {
+function SuperAdminDashboard({ stores, platformVisitors, onActivate, onBlock, onExtendTrial, onLogout, onResetPassword }) {
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
   const [sortBy, setSortBy] = useState("newest");
@@ -3768,8 +3824,9 @@ function SuperAdminDashboard({ stores, onActivate, onBlock, onExtendTrial, onLog
       <style>{`
         .sads-admin-actions { display: grid; grid-template-columns: repeat(5, 1fr); gap: 8px; }
         @media (max-width: 720px) { .sads-admin-actions { grid-template-columns: repeat(2, 1fr); } }
-        .sads-admin-stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; }
-        @media (max-width: 860px) { .sads-admin-stats { grid-template-columns: repeat(2, 1fr); } }
+        .sads-admin-stats { display: grid; grid-template-columns: repeat(5, 1fr); gap: 16px; }
+        @media (max-width: 980px) { .sads-admin-stats { grid-template-columns: repeat(3, 1fr); } }
+        @media (max-width: 640px) { .sads-admin-stats { grid-template-columns: repeat(2, 1fr); } }
         .sads-admin-meta { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
         @media (max-width: 560px) { .sads-admin-meta { grid-template-columns: 1fr 1fr; } }
         @keyframes sadsAdminFadeIn { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: translateY(0); } }
@@ -3799,6 +3856,7 @@ function SuperAdminDashboard({ stores, onActivate, onBlock, onExtendTrial, onLog
         <div className="sads-admin-stats" style={{ marginBottom: 28 }}>
           <AdminStatCard icon={Store} label="Total Stores" value={stats.total} sub={stats.newThisWeek > 0 ? `+${stats.newThisWeek} is hafte` : "Is hafte koi naya nahi"} tint={T.mint} />
           <AdminStatCard icon={TrendingUp} label="Active Stores" value={stats.active} sub={stats.total ? `${Math.round((stats.active / stats.total) * 100)}% of total` : "—"} tint="#2563EB" />
+          <AdminStatCard icon={Eye} label="Platform Visitors" value={platformVisitors} sub="Main SaaS homepage" tint="#7C3AED" />
           <AdminStatCard icon={QrCode} label="Active Plans Revenue" value={`₹${stats.revenue.toLocaleString("en-IN")}`} sub="Current active paid plans" tint="#F59E0B" />
           <AdminStatCard icon={Ban} label="Blocked Stores" value={stats.blocked} sub={stats.blocked > 0 ? "Review karo" : "Sab clear"} tint="#DC2626" />
         </div>
