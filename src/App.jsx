@@ -2536,6 +2536,15 @@ function TemplatePreview({ template, viewport = "desktop", compact = false }) {
   );
 }
 
+function StoreViewCount({ store, color = T.muted, valueColor = T.ink, borderColor = T.border, marginTop = 12 }) {
+  const views = Number(store.visitorCount) || 0;
+  return (
+    <div role="status" aria-label={`No of Views: ${views}`} style={{ textAlign: "center", marginTop, paddingTop: 10, borderTop: `1px solid ${borderColor}`, color, fontFamily: "Inter", fontSize: 12.5 }}>
+      👁️ No of Views: <strong style={{ color: valueColor }}>{views.toLocaleString("en-IN")}</strong>
+    </div>
+  );
+}
+
 function ModernStorefrontBody({ store, cart, wishlist, onBack, onAdd, onWishlist, setShowCart, filtered, filter, setFilter, search, setSearch, cartQtyForKey, onChangeQty }) {
   const P = getThemePreset(store.theme);
   const shareStore = async () => {
@@ -2668,6 +2677,7 @@ function ModernStorefrontBody({ store, cart, wishlist, onBack, onAdd, onWishlist
         <div id="ms-profile" style={{ marginTop: 24, textAlign: "center", fontSize: 12, color: P.mutedColor }}>
           {store.whatsapp && <div>📞 {store.whatsapp}{store.altPhone ? `, ${store.altPhone}` : ""}</div>}
           {store.address && <div style={{ marginTop: 4 }}>📍 {store.address}</div>}
+          <StoreViewCount store={store} color={P.mutedColor} valueColor={P.textColor} borderColor={P.borderColor} />
           <div style={{ marginTop: 10 }}>✨ Designed With ❤️ By Apna Mini Store</div>
         </div>
       </div>
@@ -3268,6 +3278,7 @@ function UniversalModernBody({ store, cart, wishlist, onBack, onAdd, onWishlist,
             {store.gstin && <div>GSTIN: {store.gstin}</div>}
           </div>
           <div style={{ fontSize: 11, color: muted, marginTop: 14 }}>© {new Date().getFullYear()} {store.name}. All Rights Reserved.</div>
+          <StoreViewCount store={store} color={muted} valueColor={text} borderColor={border} marginTop={8} />
           <div style={{ fontSize: 11, color: muted, marginTop: 4 }}>✨ Designed With ❤️ By Apna Mini Store</div>
         </div>
       </div>
@@ -3365,7 +3376,6 @@ function Storefront({ store, cart, wishlist, onBack, onAdd, onChangeQty, onRemov
 
   const cartQtyForKey = useCallback((key) => { const item = cart.find((i) => i.key === key); return item ? item.qty : 0; }, [cart]);
   const belowMin = store.minOrderValue > 0 && subtotal > 0 && subtotal < store.minOrderValue;
-  const visitorBottomPadding = store.theme && store.theme !== "classic" ? "calc(78px + env(safe-area-inset-bottom, 0px))" : 16;
 
   return (
     <div style={{ minHeight: "100vh", background: T.paper }}>
@@ -3555,6 +3565,8 @@ function Storefront({ store, cart, wishlist, onBack, onAdd, onChangeQty, onRemov
           © {new Date().getFullYear()} {store.name}. All Rights Reserved.
         </div>
 
+        <StoreViewCount store={store} marginTop={16} />
+
         <div style={{ marginTop: 20, border: `1px solid ${T.mint}55`, background: `${T.mint}0D`, borderRadius: 12, padding: 16, textAlign: "center" }}>
           <div style={{ fontSize: 13, color: T.ink }}>✨ Designed With ❤️ By Apna Mini Store</div>
           <button onClick={onBack} style={{ background: "transparent", border: "none", color: T.mint, fontWeight: 700, fontSize: 13, textDecoration: "underline", cursor: "pointer", marginTop: 4, minHeight: 36 }}>
@@ -3564,10 +3576,6 @@ function Storefront({ store, cart, wishlist, onBack, onAdd, onChangeQty, onRemov
       </div>
         </>
       )}
-
-      <div role="status" aria-label={`No of Views: ${Number(store.visitorCount) || 0}`} style={{ textAlign: "center", padding: `14px 20px ${visitorBottomPadding}px`, borderTop: `1px solid ${T.border}`, background: "#fff", color: T.muted, fontFamily: "Inter", fontSize: 12.5 }}>
-        👁️ No of Views: <strong style={{ color: T.ink }}>{(Number(store.visitorCount) || 0).toLocaleString("en-IN")}</strong>
-      </div>
 
       {showCart && (
         <div className="sads-cart-overlay" style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", zIndex: 100, display: "flex", justifyContent: "flex-end" }} onClick={() => setShowCart(false)}>
