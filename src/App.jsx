@@ -3365,6 +3365,7 @@ function Storefront({ store, cart, wishlist, onBack, onAdd, onChangeQty, onRemov
 
   const cartQtyForKey = useCallback((key) => { const item = cart.find((i) => i.key === key); return item ? item.qty : 0; }, [cart]);
   const belowMin = store.minOrderValue > 0 && subtotal > 0 && subtotal < store.minOrderValue;
+  const visitorBottomPadding = store.theme && store.theme !== "classic" ? "calc(78px + env(safe-area-inset-bottom, 0px))" : 16;
 
   return (
     <div style={{ minHeight: "100vh", background: T.paper }}>
@@ -3563,6 +3564,10 @@ function Storefront({ store, cart, wishlist, onBack, onAdd, onChangeQty, onRemov
       </div>
         </>
       )}
+
+      <div role="status" aria-label={`No of Views: ${Number(store.visitorCount) || 0}`} style={{ textAlign: "center", padding: `14px 20px ${visitorBottomPadding}px`, borderTop: `1px solid ${T.border}`, background: "#fff", color: T.muted, fontFamily: "Inter", fontSize: 12.5 }}>
+        👁️ No of Views: <strong style={{ color: T.ink }}>{(Number(store.visitorCount) || 0).toLocaleString("en-IN")}</strong>
+      </div>
 
       {showCart && (
         <div className="sads-cart-overlay" style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", zIndex: 100, display: "flex", justifyContent: "flex-end" }} onClick={() => setShowCart(false)}>
