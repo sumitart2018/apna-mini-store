@@ -160,6 +160,13 @@ function getStoreStatus(store) {
   return { status: "expired", daysLeft: 0 };
 }
 
+function storeDateValue(value) {
+  if (value && typeof value.toMillis === "function") return value.toMillis();
+  if (value && typeof value.toDate === "function") return value.toDate().getTime();
+  const parsed = value ? new Date(value).getTime() : 0;
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
 function slugify(s) {
   return s.toLowerCase().trim().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "");
 }
@@ -916,20 +923,74 @@ function FAQItem({ item, open, onClick }) {
   );
 }
 
+function DirectoryStoreCard({ store, onOpen, compact = false }) {
+  const status = store._status || getStoreStatus(store);
+  const initials = (store.name || "AM").slice(0, 2).toUpperCase();
+  return (
+    <GlassCard style={{ padding: 0, position: "relative", overflow: "hidden", minWidth: compact ? 244 : 0, flex: compact ? "0 0 244px" : "initial" }}>
+      <button onClick={() => onOpen(store.id)} aria-label={`${store.name} store kholo`} style={{ background: "transparent", border: "none", width: "100%", textAlign: "left", padding: 16, cursor: "pointer" }}>
+        <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 10 }}>
+          {store.logoImg ? (
+            <img src={store.logoImg} alt="" style={{ width: 46, height: 46, borderRadius: 12, objectFit: "cover", flexShrink: 0 }} />
+          ) : (
+            <div style={{ width: 46, height: 46, borderRadius: 12, background: `linear-gradient(135deg, ${store.color || DK.green}, ${DK.greenSoft})`, display: "flex", alignItems: "center", justifyContent: "center", color: "#fff", fontWeight: 800, fontSize: 14, flexShrink: 0 }}>{initials}</div>
+          )}
+          <span style={{ fontSize: 10, fontWeight: 800, background: status.status === "trial" ? "#EFF6FF" : "#ECFDF5", color: status.status === "trial" ? "#2563EB" : "#047857", padding: "4px 7px", borderRadius: 20, whiteSpace: "nowrap" }}>
+            {status.status === "trial" ? `TRIAL ${status.daysLeft}d` : "LIVE"}
+          </span>
+        </div>
+        <div style={{ fontWeight: 800, fontSize: 15, color: DK.text, marginTop: 12, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{store.name}</div>
+        <div style={{ fontSize: 12.5, color: DK.muted, marginTop: 4, minHeight: 34, lineHeight: 1.4 }}>{store.tagline || `${store.products.length} products available`}</div>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, marginTop: 12 }}>
+          <span style={{ fontSize: 11, color: DK.muted }}>{store.products.length} products</span>
+          <span style={{ color: DK.green, fontWeight: 800, fontSize: 12.5 }}>Visit Store →</span>
+        </div>
+      </button>
+    </GlassCard>
+  );
+}
+
 function Directory({ stores, onOpen, onCreate, onLogin, onSuperAdmin }) {
   const [openFaq, setOpenFaq] = useState(0);
   const [testiIndex, setTestiIndex] = useState(0);
   const [templateCategory, setTemplateCategory] = useState("All");
   const [previewTemplate, setPreviewTemplate] = useState(null);
   const [previewViewport, setPreviewViewport] = useState("desktop");
+  const [storeSearch, setStoreSearch] = useState("");
+  const [storeCategory, setStoreCategory] = useState("All");
+  const [storeSort, setStoreSort] = useState("newest");
+  const [storeLimit, setStoreLimit] = useState(12);
   const TESTIMONIALS = [
     { quote: "Bahut easy platform hai, 2 minute mein store ban gaya aur orders aane bhi start ho gaye!", role: "Fashion Store Owner" },
     { quote: "WhatsApp integration best hai, sab kuch easy ho gaya. Highly recommended!", role: "Electronics Seller" },
     { quote: "Professional look, easy to use aur customer support bhi amazing hai.", role: "Home Decor Seller" },
   ];
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
-  const totalProducts = stores.reduce((sum, s) => sum + s.products.length, 0);
-  const totalOrders = stores.reduce((sum, s) => sum + (s.orders ? s.orders.length : 0), 0);
+  const publicStores = useMemo(
+    () => stores.map((store) => ({ ...store, _status: getStoreStatus(store) })).filter((store) => store._status.status === "active" || store._status.status === "trial"),
+    [stores]
+  );
+  const storeCategories = useMemo(
+    () => ["All", ...Array.from(new Set(publicStores.flatMap((store) => Array.isArray(store.categories) ? store.categories : []).filter(Boolean))).sort((a, b) => a.localeCompare(b))],
+    [publicStores]
+  );
+  const filteredStores = useMemo(() => {
+    const query = storeSearch.trim().toLowerCase();
+    let list = publicStores.filter((store) => {
+      const matchesCategory = storeCategory === "All" || (store.categories || []).includes(storeCategory);
+      const searchText = [store.name, store.tagline, store.slug, ...(store.categories || [])].filter(Boolean).join(" ").toLowerCase();
+      return matchesCategory && (!query || searchText.includes(query));
+    });
+    list = [...list];
+    if (storeSort === "name") list.sort((a, b) => a.name.localeCompare(b.name));
+    else if (storeSort === "products") list.sort((a, b) => b.products.length - a.products.length);
+    else list.sort((a, b) => storeDateValue(b.createdAt) - storeDateValue(a.createdAt));
+    return list;
+  }, [publicStores, storeSearch, storeCategory, storeSort]);
+  const featuredStores = useMemo(() => [...publicStores].sort((a, b) => b.products.length - a.products.length || storeDateValue(b.createdAt) - storeDateValue(a.createdAt)).slice(0, 6), [publicStores]);
+  const visibleStores = filteredStores.slice(0, storeLimit);
+  const totalProducts = publicStores.reduce((sum, s) => sum + s.products.length, 0);
+  const totalOrders = publicStores.reduce((sum, s) => sum + (s.orders ? s.orders.length : 0), 0);
   const visibleTemplates = useMemo(
     () => TEMPLATE_CATALOG.filter((template) => templateCategory === "All" || template.category === templateCategory),
     [templateCategory]
@@ -952,6 +1013,7 @@ function Directory({ stores, onOpen, onCreate, onLogin, onSuperAdmin }) {
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
   }, [previewTemplate]);
+  useEffect(() => { setStoreLimit(12); }, [storeSearch, storeCategory, storeSort]);
   useBodyScrollLock(Boolean(mobileMenuOpen || previewTemplate));
 
   return (
@@ -989,6 +1051,8 @@ function Directory({ stores, onOpen, onCreate, onLogin, onSuperAdmin }) {
         .sads-btn { transition: transform 0.12s ease, opacity 0.15s ease, box-shadow 0.2s ease; -webkit-tap-highlight-color: transparent; }
         .sads-btn:hover { transform: translateY(-2px); }
         .sads-btn:active { transform: scale(0.95); }
+        .sads-store-toolbar { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(150px, 0.7fr) minmax(150px, 0.7fr); gap: 10px; }
+        @media (max-width: 640px) { .sads-store-toolbar { grid-template-columns: 1fr; } }
 
         /* consistent horizontal section padding: 16px mobile, 24px sm+ */
         .sads-px { padding-left: 16px !important; padding-right: 16px !important; }
@@ -1281,26 +1345,71 @@ function Directory({ stores, onOpen, onCreate, onLogin, onSuperAdmin }) {
 
       {/* LIVE STORES */}
       <div id="sads-stores" className="sads-px" style={{ maxWidth: 1180, margin: "0 auto", padding: "0 0 60px" }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 20, flexWrap: "wrap", gap: 8 }}>
-          <h2 className="sads-h2" style={{ margin: 0 }}>Live Stores <span style={{ color: DK.muted, fontWeight: 500, fontSize: 15 }}>({stores.length})</span></h2>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", marginBottom: 16, flexWrap: "wrap", gap: 10 }}>
+          <div>
+            <div style={{ color: DK.green, fontSize: 11, fontWeight: 800, letterSpacing: "0.07em", textTransform: "uppercase", marginBottom: 5 }}>Explore local businesses</div>
+            <h2 className="sads-h2" style={{ margin: 0 }}>Live Stores <span style={{ color: DK.muted, fontWeight: 500, fontSize: 15 }}>({publicStores.length})</span></h2>
+          </div>
+          <button onClick={() => document.getElementById("sads-all-stores")?.scrollIntoView({ behavior: "smooth", block: "start" })} style={{ minHeight: 40, padding: "8px 13px", borderRadius: 8, border: `1px solid ${DK.cardBorder}`, background: "#fff", color: DK.green, fontFamily: "Inter", fontWeight: 700, fontSize: 12.5, cursor: "pointer" }}>Explore All Stores →</button>
         </div>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))", gap: 16 }}>
-          {stores.map((s) => {
-            const st = getStoreStatus(s);
-            return (
-              <GlassCard key={s.id} style={{ padding: 0, position: "relative", overflow: "hidden" }}>
-                <button onClick={() => onOpen(s.id)} aria-label={`${s.name} store kholo`} style={{ background: "transparent", border: "none", width: "100%", textAlign: "left", padding: 18, cursor: "pointer" }}>
-                  {st.status === "trial" && <div style={{ position: "absolute", top: 14, right: 14, fontSize: 10, fontWeight: 800, background: "rgba(59,130,246,0.14)", color: DK.greenSoft, padding: "2px 8px", borderRadius: 6 }}>TRIAL {st.daysLeft}d</div>}
-                  {(st.status === "expired" || st.status === "blocked") && <div style={{ position: "absolute", top: 14, right: 14, fontSize: 10, fontWeight: 800, background: "rgba(220,38,38,0.15)", color: "#F87171", padding: "2px 8px", borderRadius: 6 }}>INACTIVE</div>}
-                  <div style={{ width: 42, height: 42, borderRadius: 12, background: s.color || DK.green, marginBottom: 12 }} />
-                  <div style={{ fontWeight: 700, fontSize: 16 }}>{s.name}</div>
-                  <div style={{ fontSize: 13, color: DK.muted, marginTop: 4 }}>{s.tagline || `${s.products.length} products`}</div>
-                   <div style={{ fontSize: 12, color: DK.muted, opacity: 0.6, marginTop: 10, fontFamily: "monospace" }}>/{s.slug || s.id}</div>
-                  <div style={{ marginTop: 12, color: DK.green, fontWeight: 700, fontSize: 13 }}>Visit Store →</div>
-                </button>
-              </GlassCard>
-            );
-          })}
+        {featuredStores.length > 0 && !storeSearch && storeCategory === "All" && (
+          <div style={{ marginBottom: 28 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+              <div style={{ fontWeight: 800, fontSize: 15, color: DK.text }}>Featured Stores</div>
+              <div style={{ fontSize: 11.5, color: DK.muted }}>Top active stores</div>
+            </div>
+            <div style={{ display: "flex", gap: 12, overflowX: "auto", padding: "2px 2px 8px", scrollSnapType: "x proximity" }}>
+              {featuredStores.map((store) => <div key={`featured-${store.id}`} style={{ scrollSnapAlign: "start" }}><DirectoryStoreCard store={store} onOpen={onOpen} compact /></div>)}
+            </div>
+          </div>
+        )}
+
+        <div id="sads-all-stores" style={{ scrollMarginTop: 90 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12, gap: 10, flexWrap: "wrap" }}>
+            <div>
+              <div style={{ fontWeight: 800, fontSize: 15, color: DK.text }}>All Live Stores</div>
+              <div style={{ color: DK.muted, fontSize: 11.5, marginTop: 3 }}>{filteredStores.length} store{filteredStores.length === 1 ? "" : "s"} found</div>
+            </div>
+            <div style={{ color: DK.muted, fontSize: 11.5 }}>Showing {Math.min(storeLimit, filteredStores.length)} of {filteredStores.length}</div>
+          </div>
+          <div className="sads-store-toolbar" style={{ marginBottom: 16 }}>
+            <label style={{ position: "relative" }}>
+              <Search size={15} color={DK.muted} style={{ position: "absolute", left: 12, top: "50%", transform: "translateY(-50%)" }} />
+              <span style={{ position: "absolute", width: 1, height: 1, padding: 0, margin: -1, overflow: "hidden", clip: "rect(0,0,0,0)", whiteSpace: "nowrap", border: 0 }}>Store search</span>
+              <input value={storeSearch} onChange={(event) => setStoreSearch(event.target.value)} placeholder="Store naam ya category search karo" style={{ width: "100%", minHeight: 44, padding: "0 12px 0 34px", borderRadius: 9, border: `1px solid ${DK.cardBorder}`, background: "#fff", color: DK.text, fontFamily: "Inter", fontSize: 12.5, boxSizing: "border-box" }} />
+            </label>
+            <label>
+              <span style={{ position: "absolute", width: 1, height: 1, padding: 0, margin: -1, overflow: "hidden", clip: "rect(0,0,0,0)", whiteSpace: "nowrap", border: 0 }}>Store category</span>
+              <select value={storeCategory} onChange={(event) => setStoreCategory(event.target.value)} style={{ width: "100%", minHeight: 44, padding: "0 10px", borderRadius: 9, border: `1px solid ${DK.cardBorder}`, background: "#fff", color: DK.text, fontFamily: "Inter", fontSize: 12.5, cursor: "pointer" }}>
+                {storeCategories.map((category) => <option key={category} value={category}>{category === "All" ? "All Categories" : category}</option>)}
+              </select>
+            </label>
+            <label>
+              <span style={{ position: "absolute", width: 1, height: 1, padding: 0, margin: -1, overflow: "hidden", clip: "rect(0,0,0,0)", whiteSpace: "nowrap", border: 0 }}>Store sort</span>
+              <select value={storeSort} onChange={(event) => setStoreSort(event.target.value)} style={{ width: "100%", minHeight: 44, padding: "0 10px", borderRadius: 9, border: `1px solid ${DK.cardBorder}`, background: "#fff", color: DK.text, fontFamily: "Inter", fontSize: 12.5, cursor: "pointer" }}>
+                <option value="newest">Newest First</option>
+                <option value="products">Most Products</option>
+                <option value="name">Name A-Z</option>
+              </select>
+            </label>
+          </div>
+
+          {filteredStores.length > 0 ? (
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))", gap: 16 }}>
+              {visibleStores.map((store) => <DirectoryStoreCard key={store.id} store={store} onOpen={onOpen} />)}
+            </div>
+          ) : (
+            <GlassCard style={{ padding: "34px 20px", textAlign: "center" }}>
+              <div style={{ fontSize: 30, marginBottom: 8 }}>🔎</div>
+              <div style={{ fontWeight: 800, color: DK.text }}>Koi live store nahi mila</div>
+              <div style={{ color: DK.muted, fontSize: 12.5, marginTop: 5 }}>Search ya filter badal kar dobara try karo.</div>
+            </GlassCard>
+          )}
+          {storeLimit < filteredStores.length && (
+            <div style={{ textAlign: "center", marginTop: 22 }}>
+              <button onClick={() => setStoreLimit((limit) => limit + 12)} className="sads-btn" style={{ minHeight: 44, padding: "10px 18px", borderRadius: 9, border: `1px solid ${DK.cardBorder}`, background: "#fff", color: DK.green, fontFamily: "Inter", fontWeight: 800, fontSize: 13, cursor: "pointer" }}>Load More Stores ({filteredStores.length - storeLimit} remaining)</button>
+            </div>
+          )}
         </div>
       </div>
 

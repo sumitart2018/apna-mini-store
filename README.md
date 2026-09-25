@@ -79,6 +79,9 @@ This pushes `firestore.rules` and `storage.rules` — they're written so that:
 - The seller product form includes a no-cost offline **Free AI Assistant**
   that drafts a description, tags, and WhatsApp marketing copy without an
   API key or recurring AI charge.
+- The public Live Stores directory stays compact with a featured horizontal
+  carousel, active-store filtering, search/category/sort controls, responsive
+  mobile layout, and incremental **Load More Stores** pagination.
 - The Super Admin (matched by email) can update any store — that's how
   plan activation / blocking / trial extension works.
 
