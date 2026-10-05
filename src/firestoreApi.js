@@ -40,6 +40,7 @@ import {
   orderBy as fsOrderBy,
   where as fsWhere,
   runTransaction,
+  writeBatch,
 } from "firebase/firestore";
 import { ref, uploadBytes, getDownloadURL, deleteObject } from "firebase/storage";
 import { auth, db, storage, googleProvider } from "./firebase";
@@ -203,6 +204,38 @@ export async function trackPlatformVisit() {
 
 export async function trackStoreVisit(storeId) {
   await updateDoc(doc(db, "stores", storeId), { visitorCount: increment(1) });
+}
+
+// Store analytics keeps public, approximate engagement counters separate from
+// the seller's private orders. Public visitors can only increase these values
+// by one; the dashboard reads the summary as the store owner.
+export function watchStoreAnalytics(storeId, onChange, onError) {
+  return onSnapshot(
+    doc(db, "stores", storeId, "analytics", "summary"),
+    (snap) => onChange(snap.exists() ? snap.data() : {}),
+    (err) => { console.error("watchStoreAnalytics failed:", err); if (onError) onError(err); }
+  );
+}
+
+export async function trackStoreAnalytics(storeId, event, product) {
+  const productField = event === "productView" ? "views" : "addToCart";
+  const batch = writeBatch(db);
+  const summaryRef = doc(db, "stores", storeId, "analytics", "summary");
+  batch.set(summaryRef, {
+    productViews: event === "productView" ? increment(1) : increment(0),
+    addToCart: event === "addToCart" ? increment(1) : increment(0),
+  }, { merge: true });
+
+  if (product?.id) {
+    const productRef = doc(db, "stores", storeId, "analytics", "products", product.id);
+    batch.set(productRef, {
+      productId: product.id,
+      name: product.name || "Product",
+      views: productField === "views" ? increment(1) : increment(0),
+      addToCart: productField === "addToCart" ? increment(1) : increment(0),
+    }, { merge: true });
+  }
+  await batch.commit();
 }
 
 // Reviews are public only after the store owner approves them. The public

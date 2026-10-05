@@ -102,6 +102,43 @@ service cloud.firestore {
         allow delete: if false;
       }
 
+      // Public engagement counters. These counters are intentionally
+      // append-by-one only; sellers can read them, but no browser can replace
+      // the summary with an arbitrary number.
+      match /analytics/{analyticsId} {
+        allow read: if request.auth != null && request.auth.uid == storeId && analyticsId == "summary";
+        allow create: if analyticsId == "summary"
+          && request.resource.data.keys().hasOnly(["productViews", "addToCart"])
+          && request.resource.data.productViews is number
+          && request.resource.data.addToCart is number
+          && ((request.resource.data.productViews == 1 && request.resource.data.addToCart == 0)
+            || (request.resource.data.productViews == 0 && request.resource.data.addToCart == 1));
+        allow update: if analyticsId == "summary"
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(["productViews", "addToCart"])
+          && ((request.resource.data.productViews == resource.data.productViews + 1
+            && request.resource.data.addToCart == resource.data.addToCart)
+            || (request.resource.data.addToCart == resource.data.addToCart + 1
+            && request.resource.data.productViews == resource.data.productViews));
+
+        match /products/{productId} {
+          allow read: if request.auth != null && request.auth.uid == storeId;
+          allow create: if request.resource.data.keys().hasOnly(["productId", "name", "views", "addToCart"])
+            && request.resource.data.productId == productId
+            && request.resource.data.name is string
+            && request.resource.data.views is number
+            && request.resource.data.addToCart is number
+            && ((request.resource.data.views == 1 && request.resource.data.addToCart == 0)
+              || (request.resource.data.views == 0 && request.resource.data.addToCart == 1));
+          allow update: if request.resource.data.diff(resource.data).affectedKeys().hasOnly(["name", "views", "addToCart"])
+            && request.resource.data.productId == resource.data.productId
+            && ((request.resource.data.views == resource.data.views + 1
+              && request.resource.data.addToCart == resource.data.addToCart)
+              || (request.resource.data.addToCart == resource.data.addToCart + 1
+              && request.resource.data.views == resource.data.views));
+          allow delete: if false;
+        }
+      }
+
       match /reviews/{reviewId} {
         // Anyone can submit feedback, but it always starts as pending and is
         // never visible publicly until the store owner approves it.

@@ -1,13 +1,13 @@
 import React, { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { ShoppingCart, MessageCircle, Palette, Package, QrCode, BarChart3, ShieldCheck, Smartphone, Users, Boxes, Search, Zap, Menu, X, Facebook, Instagram, Youtube, Heart, Truck, Headphones, User, Phone, MapPin, FileText, Mail, Twitter, ShoppingBag, Shirt, Coffee, KeyRound, Grid3x3, Share2, SlidersHorizontal, Home, Award, Star, ExternalLink, Globe, UtensilsCrossed, Moon, Sun, Sparkles, TrendingUp, Flame, Bell, LogOut, Filter, ArrowUpDown, ChevronLeft, ChevronRight, Store, Ban, CalendarDays, Clock, Hash, TrendingDown, Copy, Lock, Eye, EyeOff, Loader2 } from "lucide-react";
 import {
-  watchAllStores, watchAllProducts, watchOrdersForStore, watchPlatformAnalytics, watchAuthState,
+  watchAllStores, watchAllProducts, watchOrdersForStore, watchPlatformAnalytics, watchStoreAnalytics, watchAuthState,
   signUpSeller, signInSeller, signOutUser, friendlyAuthError,
   updateStoreProfile, addStoreCategory, removeStoreCategory,
   setStorePlan, setStoreBlocked, setTrialStartedAt,
   createProduct, editProduct, removeProduct,
   createOrder, setOrderStatus, setOrderPaymentStatus, uploadStoreImage, resetSellerPassword, signInWithGoogle,
-  trackPlatformVisit, trackStoreVisit, watchReviewsForStore, watchApprovedReviews,
+  trackPlatformVisit, trackStoreVisit, trackStoreAnalytics, watchReviewsForStore, watchApprovedReviews,
   createReview, setReviewStatus, deleteReview
 } from "./firestoreApi";
 
@@ -501,6 +501,7 @@ export default function App() {
   const [storeProfiles, setStoreProfiles] = useState([]);
   const [productsByStore, setProductsByStore] = useState({});
   const [ordersByStore, setOrdersByStore] = useState({});
+  const [analyticsByStore, setAnalyticsByStore] = useState({});
   const [reviewsByStore, setReviewsByStore] = useState({});
   const [platformVisitors, setPlatformVisitors] = useState(0);
   // undefined = auth state not yet resolved, null = logged out, object = logged in
@@ -582,6 +583,7 @@ export default function App() {
     if (authUser === undefined) return;
     if (!authUser || isSuperAdmin) {
       setOrdersByStore({});
+      setAnalyticsByStore({});
       setReviewsByStore({});
       return;
     }
@@ -591,7 +593,10 @@ export default function App() {
     const unsubReviews = watchReviewsForStore(authUser.uid, (reviews) => {
       setReviewsByStore({ [authUser.uid]: reviews });
     }, (err) => { console.warn("Reviews load nahi hue:", err); });
-    return () => { unsubOrders(); unsubReviews(); };
+    const unsubAnalytics = watchStoreAnalytics(authUser.uid, (analytics) => {
+      setAnalyticsByStore({ [authUser.uid]: analytics });
+    }, (err) => { console.warn("Analytics load nahi hua:", err); });
+    return () => { unsubOrders(); unsubReviews(); unsubAnalytics(); };
   }, [authUser, isSuperAdmin]);
 
   // On first load, if the browser already has a persisted login, jump
@@ -811,6 +816,7 @@ export default function App() {
       if (c.find((i) => i.key === key)) return c.map((i) => (i.key === key ? { ...i, qty: i.qty + 1 } : i));
       return [...c, { ...p, ...selectedVariant, variantLabel: productVariantLabel(selectedVariant), key, qty: 1 }];
     });
+    if (activeStore?.id) trackStoreAnalytics(activeStore.id, "addToCart", p).catch((err) => console.warn("Add-to-cart analytics update failed:", err));
     flash("Cart mein add ho gaya");
   };
   const changeQty = (key, delta) => {
@@ -1046,7 +1052,7 @@ export default function App() {
         <SuperAdminDashboard stores={stores} platformVisitors={platformVisitors} onActivate={activatePlan} onBlock={toggleBlockStore} onExtendTrial={extendTrial} onLogout={() => { signOutUser(); setView("directory"); }} onResetPassword={sendResetEmail} />
       )}
       {view === "dashboard" && ownerStore && (
-        <Dashboard store={ownerStore} onAddProduct={addProduct} onUpdateProduct={updateProduct} onDeleteProduct={deleteProduct} onAddCategory={addCategory} onDeleteCategory={deleteCategory} onUpdateStore={updateOwnerStore} onViewStore={() => openStore(ownerStore.id)} onUpdateOrderStatus={updateOrderStatus} onUpdateOrderPaymentStatus={updateOrderPaymentStatus} onUpdateReviewStatus={updateReviewStatus} onDeleteReview={removeReview} saveState={saveState} />
+        <Dashboard store={ownerStore} storeAnalytics={analyticsByStore[ownerStore.id] || {}} onAddProduct={addProduct} onUpdateProduct={updateProduct} onDeleteProduct={deleteProduct} onAddCategory={addCategory} onDeleteCategory={deleteCategory} onUpdateStore={updateOwnerStore} onViewStore={() => openStore(ownerStore.id)} onUpdateOrderStatus={updateOrderStatus} onUpdateOrderPaymentStatus={updateOrderPaymentStatus} onUpdateReviewStatus={updateReviewStatus} onDeleteReview={removeReview} saveState={saveState} />
       )}
       {view === "storefront" && activeStore && (
         <Storefront store={activeStore} cart={cart} wishlist={wishlist} onBack={() => {
@@ -2195,7 +2201,73 @@ function SellerOnboardingChecklist({ store, onOpenTab }) {
   );
 }
 
-function Dashboard({ store, onAddProduct, onUpdateProduct, onDeleteProduct, onAddCategory, onDeleteCategory, onUpdateStore, onViewStore, onUpdateOrderStatus, onUpdateOrderPaymentStatus, onUpdateReviewStatus, onDeleteReview, saveState }) {
+function AdvancedAnalyticsPanel({ metrics }) {
+  const funnel = [
+    { label: "Store views", value: metrics.views, color: T.mint },
+    { label: "Product views", value: metrics.productViews, color: "#2563EB" },
+    { label: "Add to cart", value: metrics.addToCart, color: T.marigold },
+    { label: "Orders", value: metrics.orders, color: T.magenta },
+  ];
+  const maxFunnelValue = Math.max(1, ...funnel.map((step) => step.value));
+  const formatNumber = (value) => Number(value || 0).toLocaleString("en-IN");
+
+  return (
+    <section aria-labelledby="advanced-analytics-title" style={{ background: T.cream, border: `1px solid ${T.border}`, borderRadius: 14, padding: 18, marginBottom: 20 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 12, flexWrap: "wrap", marginBottom: 16 }}>
+        <div>
+          <h2 id="advanced-analytics-title" style={{ fontFamily: "Inter", fontSize: 18, color: T.ink, margin: 0 }}>📊 Advanced Analytics</h2>
+          <p style={{ color: T.muted, fontSize: 12, margin: "4px 0 0" }}>Store ke live engagement aur order performance ka quick overview.</p>
+        </div>
+        <span style={{ color: T.mint, fontSize: 11.5, fontWeight: 800, background: `${T.mint}12`, borderRadius: 20, padding: "5px 9px" }}>Live summary</span>
+      </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(135px, 1fr))", gap: 10 }}>
+        {[
+          { label: "Views", value: formatNumber(metrics.views), icon: "👁️", tone: T.mint },
+          { label: "Product views", value: formatNumber(metrics.productViews), icon: "📦", tone: "#2563EB" },
+          { label: "Add to cart", value: formatNumber(metrics.addToCart), icon: "🛒", tone: T.marigold },
+          { label: "Orders", value: formatNumber(metrics.orders), icon: "🧾", tone: T.magenta },
+          { label: "Revenue", value: `₹${Number(metrics.revenue || 0).toLocaleString("en-IN", { maximumFractionDigits: 0 })}`, icon: "💰", tone: "#15803D" },
+          { label: "Conversion rate", value: `${metrics.conversionRate.toFixed(2)}%`, icon: "📈", tone: "#7C3AED" },
+        ].map((card) => (
+          <div key={card.label} style={{ background: T.paper, border: `1px solid ${T.border}`, borderRadius: 10, padding: "12px 13px", minHeight: 84 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 7, color: T.muted, fontSize: 11, fontWeight: 700 }}><span aria-hidden="true">{card.icon}</span>{card.label}</div>
+            <div style={{ color: card.tone, fontSize: 21, fontWeight: 800, marginTop: 7 }}>{card.value}</div>
+          </div>
+        ))}
+      </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(250px, 1fr))", gap: 18, marginTop: 20 }}>
+        <div style={{ borderTop: `1px solid ${T.border}`, paddingTop: 14 }}>
+          <div style={{ color: T.ink, fontSize: 13, fontWeight: 800, marginBottom: 12 }}>Customer funnel</div>
+          <div style={{ display: "grid", gap: 10 }}>
+            {funnel.map((step) => (
+              <div key={step.label}>
+                <div style={{ display: "flex", justifyContent: "space-between", gap: 10, color: T.muted, fontSize: 11.5, marginBottom: 4 }}>
+                  <span>{step.label}</span><strong style={{ color: T.ink }}>{formatNumber(step.value)}</strong>
+                </div>
+                <div role="progressbar" aria-label={step.label} aria-valuemin="0" aria-valuemax={maxFunnelValue} aria-valuenow={step.value} style={{ height: 8, background: `${T.ink}10`, borderRadius: 99, overflow: "hidden" }}>
+                  <div style={{ width: `${Math.max(3, Math.round((step.value / maxFunnelValue) * 100))}%`, height: "100%", background: step.color, borderRadius: 99 }} />
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+        <div style={{ borderTop: `1px solid ${T.border}`, paddingTop: 14 }}>
+          <div style={{ color: T.ink, fontSize: 13, fontWeight: 800, marginBottom: 10 }}>Conversion kaise calculate hota hai?</div>
+          <p style={{ color: T.muted, fontSize: 12, lineHeight: 1.55, margin: 0 }}>Conversion rate = total orders ÷ store views × 100. Revenue cancelled orders ko count nahi karta; unpaid/WhatsApp orders bhi order count mein dikhte hain.</p>
+          {metrics.views === 0 ? (
+            <div role="status" style={{ marginTop: 12, color: T.marigold, background: `${T.marigold}12`, borderRadius: 8, padding: 10, fontSize: 11.5, fontWeight: 700 }}>Data collect hote hi yahan conversion rate dikhega.</div>
+          ) : (
+            <div style={{ marginTop: 12, color: T.mint, background: `${T.mint}12`, borderRadius: 8, padding: 10, fontSize: 11.5, fontWeight: 700 }}>Aapke store ka current conversion {metrics.conversionRate.toFixed(2)}% hai.</div>
+          )}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function Dashboard({ store, storeAnalytics = {}, onAddProduct, onUpdateProduct, onDeleteProduct, onAddCategory, onDeleteCategory, onUpdateStore, onViewStore, onUpdateOrderStatus, onUpdateOrderPaymentStatus, onUpdateReviewStatus, onDeleteReview, saveState }) {
   const [tab, setTab] = useState("products");
   const orders = store.orders || [];
   const reviews = store.reviews || [];
@@ -2236,6 +2308,14 @@ function Dashboard({ store, onAddProduct, onUpdateProduct, onDeleteProduct, onAd
     avg: orders.length ? orders.reduce((s, o) => s + (o.total || 0), 0) / orders.length : 0,
     paidCount: orders.filter((o) => o.paymentStatus === "paid").length,
     paidRevenue: orders.filter((o) => o.paymentStatus === "paid").reduce((s, o) => s + (o.total || 0), 0),
+  };
+  const advancedAnalytics = {
+    views: Number(store.visitorCount) || 0,
+    productViews: Number(storeAnalytics.productViews) || 0,
+    addToCart: Number(storeAnalytics.addToCart) || 0,
+    orders: orders.length,
+    revenue: orders.filter((order) => order.status !== "Cancelled").reduce((sum, order) => sum + (Number(order.total) || 0), 0),
+    conversionRate: Number(store.visitorCount) > 0 ? (orders.length / Number(store.visitorCount)) * 100 : 0,
   };
 
   const resetProductForm = () => {
@@ -2360,12 +2440,14 @@ function Dashboard({ store, onAddProduct, onUpdateProduct, onDeleteProduct, onAd
       <SellerOnboardingChecklist store={store} onOpenTab={setTab} />
 
       <div style={{ display: "flex", gap: 8, marginBottom: 20, flexWrap: "wrap" }}>
-        {["products", "categories", "orders", "reviews", "billing", "profile", "settings"].map((t) => (
+        {["products", "categories", "orders", "analytics", "reviews", "billing", "profile", "settings"].map((t) => (
           <button key={t} onClick={() => setTab(t)} style={{ padding: "10px 18px", minHeight: 44, borderRadius: 8, border: `1px solid ${T.border}`, background: tab === t ? T.marigold : "transparent", fontFamily: "Inter", fontWeight: 700, cursor: "pointer", color: tab === t ? "#fff" : T.ink, textTransform: "capitalize", position: "relative" }}>
-            {t === "products" ? "Products" : t === "categories" ? "Categories" : t === "orders" ? `Orders${orders.length ? ` (${orders.length})` : ""}` : t === "reviews" ? `Reviews${reviews.filter((review) => review.status === "pending").length ? ` (${reviews.filter((review) => review.status === "pending").length})` : ""}` : t === "billing" ? "Billing" : t === "profile" ? "Store Profile" : "Cart Settings"}
+            {t === "products" ? "Products" : t === "categories" ? "Categories" : t === "orders" ? `Orders${orders.length ? ` (${orders.length})` : ""}` : t === "analytics" ? "Analytics" : t === "reviews" ? `Reviews${reviews.filter((review) => review.status === "pending").length ? ` (${reviews.filter((review) => review.status === "pending").length})` : ""}` : t === "billing" ? "Billing" : t === "profile" ? "Store Profile" : "Cart Settings"}
           </button>
         ))}
       </div>
+
+      {tab === "analytics" && <AdvancedAnalyticsPanel metrics={advancedAnalytics} />}
 
       {tab === "categories" && (
         <div>
@@ -3784,6 +3866,26 @@ function Storefront({ store, cart, wishlist, onBack, onAdd, onChangeQty, onRemov
     if (sort === "high") list = [...list].sort((a, b) => b.price - a.price);
     return list;
   }, [store.products, filter, search, sort]);
+
+  // Count each product impression once per browser session. This keeps the
+  // product-view metric useful without inflating it on every React re-render.
+  useEffect(() => {
+    if (!store?.id || !filtered.length) return;
+    const pending = [];
+    filtered.forEach((product) => {
+      const key = `apna-mini-store:product-viewed:${store.id}:${product.id}`;
+      try {
+        if (window.sessionStorage.getItem(key)) return;
+        window.sessionStorage.setItem(key, "1");
+      } catch { /* private browsing can block storage; still try the event */ }
+      pending.push({ product, key });
+    });
+    if (!pending.length) return;
+    Promise.all(pending.map(({ product }) => trackStoreAnalytics(store.id, "productView", product))).catch((err) => {
+      console.warn("Product-view analytics update failed:", err);
+      pending.forEach(({ key }) => { try { window.sessionStorage.removeItem(key); } catch { /* ignore */ } });
+    });
+  }, [store?.id, filtered]);
 
   const cartQtyForKey = useCallback((key) => { const item = cart.find((i) => i.key === key); return item ? item.qty : 0; }, [cart]);
   const belowMin = store.minOrderValue > 0 && subtotal > 0 && subtotal < store.minOrderValue;
