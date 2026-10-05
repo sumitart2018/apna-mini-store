@@ -39,6 +39,7 @@ import {
   query,
   orderBy as fsOrderBy,
   where as fsWhere,
+  runTransaction,
 } from "firebase/firestore";
 import { ref, uploadBytes, getDownloadURL, deleteObject } from "firebase/storage";
 import { auth, db, storage, googleProvider } from "./firebase";
@@ -275,10 +276,46 @@ export async function removeProduct(uid, productId, imgUrl) {
 // ---------- Orders ----------
 
 // No auth required — customers checking out are anonymous visitors, matching
-// the original no-login WhatsApp checkout flow. See firestore.rules for the
-// matching security rule (create-only, no read/update/delete for the public).
+// the original no-login WhatsApp checkout flow. The order and tracked stock
+// decrements are committed atomically so two customers cannot both buy the
+// last unit. See firestore.rules for the matching security rule.
 export async function createOrder(storeId, order) {
-  await addDoc(collection(db, "stores", storeId, "orders"), { ...order, storeId });
+  const orderRef = doc(collection(db, "stores", storeId, "orders"));
+  await runTransaction(db, async (transaction) => {
+    const quantities = {};
+    (order.items || []).forEach((item) => {
+      if (!item.productId) return;
+      quantities[item.productId] = (quantities[item.productId] || 0) + Number(item.qty || 0);
+    });
+    const productEntries = Object.entries(quantities);
+    const productSnapshots = [];
+    for (const [productId] of productEntries) {
+      const productRef = doc(db, "stores", storeId, "products", productId);
+      productSnapshots.push({ productId, productRef, snapshot: await transaction.get(productRef) });
+    }
+
+    const stockAdjustments = {};
+    productSnapshots.forEach(({ productId, productRef, snapshot }) => {
+      const product = snapshot.data() || {};
+      if (product.trackInventory !== true) return;
+      const requested = quantities[productId];
+      const available = Math.max(0, Number(product.stockQty) || 0);
+      if (!snapshot.exists() || available < requested) {
+        const error = new Error(`Product ${product.name || "item"} ka stock kam hai`);
+        error.code = "inventory/insufficient-stock";
+        throw error;
+      }
+      const remaining = available - requested;
+      stockAdjustments[productId] = requested;
+      transaction.update(productRef, {
+        stockQty: remaining,
+        inStock: remaining > 0,
+        lastStockOrderId: orderRef.id,
+      });
+    });
+
+    transaction.set(orderRef, { ...order, storeId, stockAdjustments });
+  });
 }
 export async function setOrderStatus(uid, orderId, status) {
   await updateDoc(doc(db, "stores", uid, "orders", orderId), { status });

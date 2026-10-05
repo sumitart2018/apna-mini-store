@@ -214,6 +214,24 @@ function productVariantLabel(variant) {
   ].filter(Boolean).join(" • ");
 }
 
+function productHasStock(product) {
+  return product.trackInventory === true ? Number(product.stockQty) > 0 : product.inStock !== false;
+}
+
+function productStockLabel(product) {
+  if (product.trackInventory !== true) return product.inStock === false ? "Out of Stock" : "In Stock";
+  const quantity = Math.max(0, Number(product.stockQty) || 0);
+  if (quantity === 0) return "Out of Stock";
+  const threshold = Math.max(0, Number(product.lowStockThreshold) || 0);
+  return threshold > 0 && quantity <= threshold ? `Only ${quantity} left` : `${quantity} in stock`;
+}
+
+function productStockTone(product) {
+  if (!productHasStock(product)) return T.red;
+  if (product.trackInventory === true && Number(product.stockQty) <= Number(product.lowStockThreshold || 0)) return "#D97706";
+  return T.mint;
+}
+
 // Free, offline product helper. It intentionally uses no API key or network
 // call, so a seller can generate a useful first draft without AI billing.
 const FREE_PRODUCT_HINTS = [
@@ -752,15 +770,31 @@ export default function App() {
   const addToCart = (p, variant) => {
     const selectedVariant = normalizeProductVariant(variant);
     const key = productVariantKey(p.id, selectedVariant);
+    const found = cart.find((item) => item.key === key);
+    if (!productHasStock(p)) {
+      flash("Ye product out of stock hai");
+      return;
+    }
+    if (p.trackInventory === true && found && found.qty >= Number(p.stockQty)) {
+      flash(`Sirf ${p.stockQty} item available hai`);
+      return;
+    }
     setCart((c) => {
-      const found = c.find((i) => i.key === key);
-      if (found) return c.map((i) => (i.key === key ? { ...i, qty: i.qty + 1 } : i));
+      if (c.find((i) => i.key === key)) return c.map((i) => (i.key === key ? { ...i, qty: i.qty + 1 } : i));
       return [...c, { ...p, ...selectedVariant, variantLabel: productVariantLabel(selectedVariant), key, qty: 1 }];
     });
     flash("Cart mein add ho gaya");
   };
   const changeQty = (key, delta) => {
-    setCart((c) => c.map((i) => (i.key === key ? { ...i, qty: Math.max(0, i.qty + delta) } : i)).filter((i) => i.qty > 0));
+    setCart((c) => c.map((i) => {
+      if (i.key !== key) return i;
+      const liveProduct = activeStore?.products.find((product) => product.id === i.id) || i;
+      if (delta > 0 && liveProduct.trackInventory === true && i.qty >= Number(liveProduct.stockQty)) {
+        flash(`Sirf ${liveProduct.stockQty} item available hai`);
+        return i;
+      }
+      return { ...i, qty: Math.max(0, i.qty + delta) };
+    }).filter((i) => i.qty > 0));
   };
   const removeFromCart = (key) => setCart((c) => c.filter((i) => i.key !== key));
   const toggleWishlist = (p) => setWishlist((w) => (w.find((i) => i.id === p.id) ? w.filter((i) => i.id !== p.id) : [...w, p]));
@@ -780,7 +814,7 @@ export default function App() {
       const order = {
         date: new Date().toISOString(),
         customer,
-        items: cart.map((i) => ({ name: i.name, size: i.size, color: i.color, weight: i.weight, variantLabel: productVariantLabel(i), qty: i.qty, price: i.price })),
+        items: cart.map((i) => ({ productId: i.id, name: i.name, size: i.size, color: i.color, weight: i.weight, variantLabel: productVariantLabel(i), qty: i.qty, price: i.price })),
         subtotal, shippingFee, gst, total,
         status: "New",
       };
@@ -789,7 +823,7 @@ export default function App() {
       window.open(`https://wa.me/${activeStore.whatsapp}?text=${encodeURIComponent(msg)}`, "_blank");
       setCart([]);
     } catch (e) {
-      flash("Order save nahi hua — internet check karo aur dobara try karo");
+      flash(e.code === "inventory/insufficient-stock" ? "Kisi product ka stock abhi kam ho gaya — cart refresh karke dobara try karo" : "Order save nahi hua — internet check karo aur dobara try karo");
     } finally {
       checkoutInFlight.current = false;
     }
@@ -1986,7 +2020,7 @@ function Dashboard({ store, onAddProduct, onUpdateProduct, onDeleteProduct, onAd
   const reviews = store.reviews || [];
   const [orderFilter, setOrderFilter] = useState("All");
   const [newCat, setNewCat] = useState("");
-  const [np, setNp] = useState({ name: "", price: "", mrp: "", category: store.categories[0] || "", inStock: true, sizes: "", colors: "", weights: "", img: "", description: "", tags: "" });
+  const [np, setNp] = useState({ name: "", price: "", mrp: "", category: store.categories[0] || "", inStock: true, trackInventory: true, stockQty: "10", lowStockThreshold: "2", sizes: "", colors: "", weights: "", img: "", description: "", tags: "" });
   const [assistantMessage, setAssistantMessage] = useState("");
   const [assistantStatus, setAssistantStatus] = useState("");
   const [editingId, setEditingId] = useState(null);
@@ -2020,7 +2054,7 @@ function Dashboard({ store, onAddProduct, onUpdateProduct, onDeleteProduct, onAd
   };
 
   const resetProductForm = () => {
-    setNp({ name: "", price: "", mrp: "", category: store.categories[0] || "", inStock: true, sizes: "", colors: "", weights: "", img: "", description: "", tags: "" });
+    setNp({ name: "", price: "", mrp: "", category: store.categories[0] || "", inStock: true, trackInventory: true, stockQty: "10", lowStockThreshold: "2", sizes: "", colors: "", weights: "", img: "", description: "", tags: "" });
     setAssistantMessage("");
     setAssistantStatus("");
     setEditingId(null);
@@ -2028,7 +2062,7 @@ function Dashboard({ store, onAddProduct, onUpdateProduct, onDeleteProduct, onAd
   };
 
   const startEditProduct = (p) => {
-    setNp({ name: p.name, price: String(p.price), mrp: p.mrp ? String(p.mrp) : "", category: p.category || "", inStock: p.inStock, sizes: (p.sizes || []).join(", "), colors: (p.colors || []).join(", "), weights: (p.weights || []).join(", "), img: p.img || "", description: p.description || "", tags: (p.tags || []).join(", ") });
+    setNp({ name: p.name, price: String(p.price), mrp: p.mrp ? String(p.mrp) : "", category: p.category || "", inStock: p.inStock !== false, trackInventory: p.trackInventory === true, stockQty: p.stockQty === null || p.stockQty === undefined ? "10" : String(p.stockQty), lowStockThreshold: p.lowStockThreshold === null || p.lowStockThreshold === undefined ? "2" : String(p.lowStockThreshold), sizes: (p.sizes || []).join(", "), colors: (p.colors || []).join(", "), weights: (p.weights || []).join(", "), img: p.img || "", description: p.description || "", tags: (p.tags || []).join(", ") });
     setAssistantMessage("");
     setAssistantStatus("");
     setEditingId(p.id);
@@ -2060,10 +2094,12 @@ function Dashboard({ store, onAddProduct, onUpdateProduct, onDeleteProduct, onAd
     if (!np.name.trim()) errs.name = "Naam zaroori hai";
     if (!np.price || Number(np.price) <= 0) errs.price = "Price 0 se zyada hona chahiye";
     if (np.mrp && Number(np.mrp) < Number(np.price)) errs.mrp = "MRP, selling price se kam nahi ho sakta";
+    if (np.trackInventory && (!Number.isInteger(Number(np.stockQty)) || Number(np.stockQty) < 0)) errs.stockQty = "Stock quantity 0 ya usse zyada whole number honi chahiye";
+    if (np.trackInventory && (!Number.isInteger(Number(np.lowStockThreshold)) || Number(np.lowStockThreshold) < 0)) errs.lowStockThreshold = "Low-stock alert 0 ya usse zyada whole number hona chahiye";
     if (Object.keys(errs).length) { setNpErrors(errs); return; }
 
     const toOptions = (value) => value.split(",").map((item) => item.trim()).filter(Boolean);
-    const payload = { name: np.name.trim(), price: Number(np.price), mrp: np.mrp ? Number(np.mrp) : 0, category: np.category, inStock: np.inStock, sizes: toOptions(np.sizes), colors: toOptions(np.colors), weights: toOptions(np.weights), img: np.img, description: np.description.trim(), tags: toOptions(np.tags) };
+    const payload = { name: np.name.trim(), price: Number(np.price), mrp: np.mrp ? Number(np.mrp) : 0, category: np.category, trackInventory: np.trackInventory, stockQty: np.trackInventory ? Number(np.stockQty) : null, lowStockThreshold: np.trackInventory ? Number(np.lowStockThreshold) : 0, inStock: np.trackInventory ? Number(np.stockQty) > 0 : np.inStock, sizes: toOptions(np.sizes), colors: toOptions(np.colors), weights: toOptions(np.weights), img: np.img, description: np.description.trim(), tags: toOptions(np.tags) };
     if (editingId) onUpdateProduct(editingId, payload);
     else onAddProduct(payload);
     resetProductForm();
@@ -2125,6 +2161,13 @@ function Dashboard({ store, onAddProduct, onUpdateProduct, onDeleteProduct, onAd
           <div>
             <div style={{ fontSize: 11, color: T.muted }}>Products</div>
             <div style={{ fontSize: 21, fontWeight: 800, color: T.ink }}>{store.products.length.toLocaleString("en-IN")}</div>
+          </div>
+        </div>
+        <div style={{ background: T.cream, border: `1px solid ${T.border}`, borderRadius: 10, padding: "12px 14px", display: "flex", alignItems: "center", gap: 10 }}>
+          <Package size={20} color="#D97706" />
+          <div>
+            <div style={{ fontSize: 11, color: T.muted }}>Low Stock</div>
+            <div style={{ fontSize: 21, fontWeight: 800, color: T.ink }}>{store.products.filter((product) => product.trackInventory === true && Number(product.stockQty) > 0 && Number(product.stockQty) <= Number(product.lowStockThreshold || 0)).length.toLocaleString("en-IN")}</div>
           </div>
         </div>
       </div>
@@ -2405,9 +2448,19 @@ function Dashboard({ store, onAddProduct, onUpdateProduct, onDeleteProduct, onAd
               <input placeholder="Sizes (comma se, e.g. S,M,L) — optional" value={np.sizes} onChange={(e) => setNp({ ...np, sizes: e.target.value })} style={{ padding: "10px 12px", borderRadius: 8, border: `2px solid ${T.ink}22`, fontFamily: "Inter" }} />
               <input placeholder="Colors (comma se, e.g. Red,Blue,Black) — optional" value={np.colors} onChange={(e) => setNp({ ...np, colors: e.target.value })} style={{ padding: "10px 12px", borderRadius: 8, border: `2px solid ${T.ink}22`, fontFamily: "Inter" }} />
               <input placeholder="Weights (comma se, e.g. 250g,500g,1kg) — optional" value={np.weights} onChange={(e) => setNp({ ...np, weights: e.target.value })} style={{ padding: "10px 12px", borderRadius: 8, border: `2px solid ${T.ink}22`, fontFamily: "Inter" }} />
-              <label style={{ display: "flex", alignItems: "center", gap: 8, fontFamily: "Inter", fontSize: 14, minHeight: 44 }}>
-                <input type="checkbox" checked={np.inStock} onChange={(e) => setNp({ ...np, inStock: e.target.checked })} style={{ width: 20, height: 20 }} /> In Stock
-              </label>
+              <div style={{ background: "#F0FDF4", border: "1px solid #BBF7D0", borderRadius: 10, padding: 12 }}>
+                <label style={{ display: "flex", alignItems: "center", gap: 8, fontFamily: "Inter", fontSize: 13.5, fontWeight: 800, color: "#166534", minHeight: 32 }}>
+                  <input type="checkbox" checked={np.trackInventory} onChange={(e) => setNp({ ...np, trackInventory: e.target.checked })} style={{ width: 20, height: 20 }} /> Inventory track karo
+                </label>
+                {np.trackInventory ? (
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginTop: 8 }}>
+                    <div><label htmlFor="prod-stock-qty" style={{ display: "block", color: "#166534", fontSize: 11.5, fontWeight: 700, marginBottom: 4 }}>Stock quantity</label><input id="prod-stock-qty" type="number" min="0" step="1" value={np.stockQty} onChange={(e) => setNp({ ...np, stockQty: e.target.value })} style={{ width: "100%", minHeight: 40, padding: "8px 10px", borderRadius: 7, border: `2px solid ${npErrors.stockQty ? T.red : "#BBF7D0"}`, fontFamily: "Inter", boxSizing: "border-box" }} />{npErrors.stockQty && <div style={{ color: T.red, fontSize: 11, marginTop: 3 }}>{npErrors.stockQty}</div>}</div>
+                    <div><label htmlFor="prod-low-stock" style={{ display: "block", color: "#166534", fontSize: 11.5, fontWeight: 700, marginBottom: 4 }}>Low-stock alert at</label><input id="prod-low-stock" type="number" min="0" step="1" value={np.lowStockThreshold} onChange={(e) => setNp({ ...np, lowStockThreshold: e.target.value })} style={{ width: "100%", minHeight: 40, padding: "8px 10px", borderRadius: 7, border: `2px solid ${npErrors.lowStockThreshold ? T.red : "#BBF7D0"}`, fontFamily: "Inter", boxSizing: "border-box" }} />{npErrors.lowStockThreshold && <div style={{ color: T.red, fontSize: 11, marginTop: 3 }}>{npErrors.lowStockThreshold}</div>}</div>
+                  </div>
+                ) : (
+                  <label style={{ display: "flex", alignItems: "center", gap: 8, fontFamily: "Inter", fontSize: 12.5, color: T.muted, marginTop: 7 }}><input type="checkbox" checked={np.inStock} onChange={(e) => setNp({ ...np, inStock: e.target.checked })} style={{ width: 18, height: 18 }} /> Manual In Stock status</label>
+                )}
+              </div>
               <div style={{ display: "flex", gap: 10 }}>
                 <Button disabled={!np.name.trim() || !np.price} onClick={submitProduct}>
                   {editingId ? "Product Update Karo" : "+ Product Add Karo"}
@@ -2429,7 +2482,7 @@ function Dashboard({ store, onAddProduct, onUpdateProduct, onDeleteProduct, onAd
                 {p.description && <div style={{ fontSize: 11.5, color: T.muted, lineHeight: 1.4, marginTop: 5, display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}>{p.description}</div>}
                 {Array.isArray(p.tags) && p.tags.length > 0 && <div style={{ display: "flex", flexWrap: "wrap", gap: 4, marginTop: 6 }}>{p.tags.slice(0, 3).map((tag) => <span key={tag} style={{ background: `${T.mint}12`, color: T.mint, borderRadius: 4, padding: "2px 5px", fontSize: 9.5, fontWeight: 700 }}>{tag}</span>)}</div>}
                 <div style={{ fontSize: 12, opacity: 0.6, marginTop: 2 }}>{p.category} {productVariantLabel({ size: (p.sizes || []).join("/"), color: (p.colors || []).join("/"), weight: (p.weights || []).join("/") }) ? `• ${productVariantLabel({ size: (p.sizes || []).join("/"), color: (p.colors || []).join("/"), weight: (p.weights || []).join("/") })}` : ""}</div>
-                <div style={{ fontSize: 11, marginTop: 4, color: p.inStock ? T.mint : T.red, fontWeight: 700 }}>{p.inStock ? "In Stock" : "Out of Stock"}</div>
+                <div style={{ fontSize: 11, marginTop: 4, color: productStockTone(p), fontWeight: 700 }}>{productStockLabel(p)}</div>
                 <div style={{ display: "flex", gap: 12, marginTop: 8 }}>
                   <button style={{ minHeight: 36, padding: "8px 0", fontSize: 12.5, color: T.ink, background: "transparent", border: "none", cursor: "pointer", textDecoration: "underline" }} onClick={() => startEditProduct(p)}>Edit</button>
                   <button style={{ minHeight: 36, padding: "8px 0", fontSize: 12.5, color: T.red, background: "transparent", border: "none", cursor: "pointer", textDecoration: "underline" }} onClick={() => { if (window.confirm(`"${p.name}" delete karna hai? Ye undo nahi ho sakta.`)) onDeleteProduct(p.id); }}>Delete</button>
@@ -2463,8 +2516,8 @@ function ProductCard({ p, store, wished, onWishlist, onAdd, cartQtyForKey, onCha
       <ProductImg color={store.color} img={p.img} />
       <div style={{ fontFamily: "Inter", fontWeight: 700, fontSize: 14, color: T.ink }}>{p.name}</div>
       {p.description && <div style={{ fontSize: 11.5, color: T.muted, lineHeight: 1.4, marginTop: 4, display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}>{p.description}</div>}
-      <div style={{ fontSize: 11, marginTop: 3, color: p.inStock ? T.mint : T.red, fontWeight: 700 }}>
-        {p.inStock ? "● In Stock" : "● Out of Stock"}
+      <div style={{ fontSize: 11, marginTop: 3, color: productStockTone(p), fontWeight: 700 }}>
+        ● {productStockLabel(p)}
       </div>
       <div style={{ display: "flex", gap: 6, alignItems: "baseline", marginTop: 5 }}>
         <span style={{ color: T.magenta, fontWeight: 800, fontFamily: "Inter", fontSize: 16 }}>₹{p.price}</span>
@@ -2475,11 +2528,11 @@ function ProductCard({ p, store, wished, onWishlist, onAdd, cartQtyForKey, onCha
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: 10, border: `1px solid ${T.border}`, borderRadius: 8, overflow: "hidden" }}>
           <button onClick={() => onChangeQty(key, -1)} aria-label="Quantity kam karo" style={{ padding: "8px 16px", minHeight: 36, cursor: "pointer", fontWeight: 800, background: T.paper, border: "none" }}>−</button>
           <div style={{ fontWeight: 700, fontFamily: "Inter" }}>{qty}</div>
-          <button onClick={() => onChangeQty(key, 1)} aria-label="Quantity badhao" style={{ padding: "8px 16px", minHeight: 36, cursor: "pointer", fontWeight: 800, background: T.paper, border: "none" }}>+</button>
+          <button disabled={p.trackInventory === true && qty >= Number(p.stockQty)} onClick={() => onChangeQty(key, 1)} aria-label="Quantity badhao" style={{ padding: "8px 16px", minHeight: 36, cursor: p.trackInventory === true && qty >= Number(p.stockQty) ? "not-allowed" : "pointer", fontWeight: 800, background: T.paper, border: "none", opacity: p.trackInventory === true && qty >= Number(p.stockQty) ? 0.45 : 1 }}>+</button>
         </div>
       ) : (
-        <Button variant="dark" disabled={!p.inStock} style={{ width: "100%", marginTop: 10, fontSize: 13, padding: "8px" }} onClick={() => onAdd(p, variant)}>
-          {p.inStock ? "Add to Cart" : "Out of Stock"}
+        <Button variant="dark" disabled={!productHasStock(p)} style={{ width: "100%", marginTop: 10, fontSize: 13, padding: "8px" }} onClick={() => onAdd(p, variant)}>
+          {productHasStock(p) ? "Add to Cart" : "Out of Stock"}
         </Button>
       )}
     </div>
@@ -2499,6 +2552,7 @@ function ModernProductCard({ p, palette, wished, onWishlist, onAdd, cartQtyForKe
       <ProductImg color={palette.accent} img={p.img} />
       <div style={{ fontWeight: 700, fontSize: 13, color: palette.textColor, marginTop: 2 }}>{p.name}</div>
       {p.description && <div style={{ fontSize: 10.5, color: palette.mutedColor, lineHeight: 1.35, marginTop: 3, display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}>{p.description}</div>}
+      <div style={{ fontSize: 10.5, marginTop: 3, color: productStockTone(p), fontWeight: 700 }}>● {productStockLabel(p)}</div>
       <div style={{ display: "flex", gap: 6, alignItems: "baseline", marginTop: 4 }}>
         <span style={{ color: palette.accent, fontWeight: 800, fontSize: 15 }}>₹{p.price}</span>
         {p.mrp > p.price && <span style={{ fontSize: 11.5, color: palette.mutedColor, textDecoration: "line-through" }}>₹{p.mrp}</span>}
@@ -2508,11 +2562,11 @@ function ModernProductCard({ p, palette, wished, onWishlist, onAdd, cartQtyForKe
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: 8, border: `1px solid ${palette.borderColor}`, borderRadius: 8, overflow: "hidden" }}>
           <button onClick={() => onChangeQty(key, -1)} aria-label="Quantity kam karo" style={{ padding: "6px 12px", minHeight: 32, cursor: "pointer", fontWeight: 800, background: palette.isDark ? "#1a1a2e" : T.paper, border: "none", color: palette.textColor }}>−</button>
           <div style={{ fontWeight: 700, fontFamily: "Inter", fontSize: 13, color: palette.textColor }}>{qty}</div>
-          <button onClick={() => onChangeQty(key, 1)} aria-label="Quantity badhao" style={{ padding: "6px 12px", minHeight: 32, cursor: "pointer", fontWeight: 800, background: palette.isDark ? "#1a1a2e" : T.paper, border: "none", color: palette.textColor }}>+</button>
+          <button disabled={p.trackInventory === true && qty >= Number(p.stockQty)} onClick={() => onChangeQty(key, 1)} aria-label="Quantity badhao" style={{ padding: "6px 12px", minHeight: 32, cursor: p.trackInventory === true && qty >= Number(p.stockQty) ? "not-allowed" : "pointer", fontWeight: 800, background: palette.isDark ? "#1a1a2e" : T.paper, border: "none", color: palette.textColor, opacity: p.trackInventory === true && qty >= Number(p.stockQty) ? 0.45 : 1 }}>+</button>
         </div>
       ) : (
-        <button className="sads-storebtn" disabled={!p.inStock} onClick={() => onAdd(p, variant)} style={{ width: "100%", marginTop: 8, minHeight: 34, background: p.inStock ? palette.accent : palette.borderColor, color: "#fff", border: "none", borderRadius: 8, fontWeight: 700, fontSize: 12, cursor: p.inStock ? "pointer" : "not-allowed" }}>
-          {p.inStock ? "Add" : "Out of Stock"}
+        <button className="sads-storebtn" disabled={!productHasStock(p)} onClick={() => onAdd(p, variant)} style={{ width: "100%", marginTop: 8, minHeight: 34, background: productHasStock(p) ? palette.accent : palette.borderColor, color: "#fff", border: "none", borderRadius: 8, fontWeight: 700, fontSize: 12, cursor: productHasStock(p) ? "pointer" : "not-allowed" }}>
+          {productHasStock(p) ? "Add" : "Out of Stock"}
         </button>
       )}
     </div>
@@ -3074,6 +3128,7 @@ const UMProductCard = React.memo(function UMProductCard({ p, wished, cartQtyForK
       </button>
       <div style={{ fontWeight: 700, fontSize: 13, color: text, marginTop: 4 }}>{p.name}</div>
       {p.description && <div style={{ fontSize: 10.5, color: muted, lineHeight: 1.35, marginTop: 3, display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}>{p.description}</div>}
+      <div style={{ fontSize: 10.5, marginTop: 3, color: productStockTone(p), fontWeight: 700 }}>● {productStockLabel(p)}</div>
       <div style={{ display: "flex", gap: 6, alignItems: "baseline", marginTop: 4 }}>
         <span style={{ color: palette.secondary, fontWeight: 800, fontSize: 15 }}>₹{p.price}</span>
         {p.mrp > p.price && <span style={{ fontSize: 11.5, color: muted, textDecoration: "line-through" }}>₹{p.mrp}</span>}
@@ -3083,11 +3138,11 @@ const UMProductCard = React.memo(function UMProductCard({ p, wished, cartQtyForK
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: 8, border: `1px solid ${border}`, borderRadius: 10, overflow: "hidden" }}>
           <button onClick={() => onChangeQty(key, -1)} aria-label="Quantity kam karo" className="um-tap" style={{ padding: "6px 12px", minHeight: 32, cursor: "pointer", fontWeight: 800, background: "transparent", border: "none", color: text }}>−</button>
           <div style={{ fontWeight: 700, fontFamily: "Inter", fontSize: 13, color: text }}>{qty}</div>
-          <button onClick={() => onChangeQty(key, 1)} aria-label="Quantity badhao" className="um-tap" style={{ padding: "6px 12px", minHeight: 32, cursor: "pointer", fontWeight: 800, background: "transparent", border: "none", color: text }}>+</button>
+          <button disabled={p.trackInventory === true && qty >= Number(p.stockQty)} onClick={() => onChangeQty(key, 1)} aria-label="Quantity badhao" className="um-tap" style={{ padding: "6px 12px", minHeight: 32, cursor: p.trackInventory === true && qty >= Number(p.stockQty) ? "not-allowed" : "pointer", fontWeight: 800, background: "transparent", border: "none", color: text, opacity: p.trackInventory === true && qty >= Number(p.stockQty) ? 0.45 : 1 }}>+</button>
         </div>
       ) : (
-        <UMRippleButton ariaLabel={p.inStock ? "Add to cart" : "Out of stock"} disabled={!p.inStock} onClick={() => onAdd(p, variant)} style={{ width: "100%", marginTop: 8, minHeight: 36, background: p.inStock ? palette.primary : border, color: "#fff", border: "none", borderRadius: 10, fontWeight: 700, fontSize: 12, cursor: p.inStock ? "pointer" : "not-allowed" }}>
-          {p.inStock ? "Add to Cart" : "Out of Stock"}
+        <UMRippleButton ariaLabel={productHasStock(p) ? "Add to cart" : "Out of stock"} disabled={!productHasStock(p)} onClick={() => onAdd(p, variant)} style={{ width: "100%", marginTop: 8, minHeight: 36, background: productHasStock(p) ? palette.primary : border, color: "#fff", border: "none", borderRadius: 10, fontWeight: 700, fontSize: 12, cursor: productHasStock(p) ? "pointer" : "not-allowed" }}>
+          {productHasStock(p) ? "Add to Cart" : "Out of Stock"}
         </UMRippleButton>
       )}
     </div>
@@ -3417,13 +3472,14 @@ function UniversalModernBody({ store, cart, wishlist, onBack, onAdd, onWishlist,
             </div>
             <UMImage src={quickView.img} alt={quickView.name} height={160} radius={18} color={palette.secondary} />
             <div style={{ fontWeight: 800, fontSize: 16, color: text, marginTop: 8 }}>{quickView.name}</div>
+            <div style={{ fontSize: 11.5, color: productStockTone(quickView), fontWeight: 700, marginTop: 4 }}>● {productStockLabel(quickView)}</div>
             <div style={{ display: "flex", gap: 8, alignItems: "baseline", marginTop: 6 }}>
               <span style={{ color: palette.secondary, fontWeight: 800, fontSize: 18 }}>₹{quickView.price}</span>
               {quickView.mrp > quickView.price && <span style={{ fontSize: 13, color: muted, textDecoration: "line-through" }}>₹{quickView.mrp}</span>}
             </div>
             <VariantSelectors product={quickView} value={quickViewVariant} onChange={setQuickViewVariant} accent={palette.secondary} border={border} text={text} background={surface} />
-            <button className="um-tap" disabled={!quickView.inStock} onClick={() => { onAdd(quickView, quickViewVariant); setQuickView(null); }} style={{ width: "100%", marginTop: 16, minHeight: 44, background: quickView.inStock ? palette.primary : border, color: "#fff", border: "none", borderRadius: 12, fontWeight: 700, fontSize: 13.5, cursor: quickView.inStock ? "pointer" : "not-allowed" }}>
-              {quickView.inStock ? "Add to Cart" : "Out of Stock"}
+            <button className="um-tap" disabled={!productHasStock(quickView)} onClick={() => { onAdd(quickView, quickViewVariant); setQuickView(null); }} style={{ width: "100%", marginTop: 16, minHeight: 44, background: productHasStock(quickView) ? palette.primary : border, color: "#fff", border: "none", borderRadius: 12, fontWeight: 700, fontSize: 13.5, cursor: productHasStock(quickView) ? "pointer" : "not-allowed" }}>
+              {productHasStock(quickView) ? "Add to Cart" : "Out of Stock"}
             </button>
           </div>
         </div>

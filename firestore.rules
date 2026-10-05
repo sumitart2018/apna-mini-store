@@ -51,6 +51,20 @@ service cloud.firestore {
           && request.auth.uid == storeId
           && resource.data.storeId == storeId
           && request.resource.data.storeId == storeId;
+        // Anonymous checkout can reduce tracked stock only inside the same
+        // atomic transaction that creates the matching order. getAfter()
+        // prevents a random browser update from increasing or resetting stock.
+        allow update: if request.resource.data.diff(resource.data).affectedKeys().hasOnly(["stockQty", "inStock", "lastStockOrderId"])
+          && resource.data.trackInventory == true
+          && request.resource.data.trackInventory == true
+          && request.resource.data.stockQty is number
+          && request.resource.data.stockQty >= 0
+          && request.resource.data.stockQty < resource.data.stockQty
+          && request.resource.data.inStock == (request.resource.data.stockQty > 0)
+          && request.resource.data.lastStockOrderId is string
+          && getAfter(/databases/$(database)/documents/stores/$(storeId)/orders/$(request.resource.data.lastStockOrderId)).data.storeId == storeId
+          && getAfter(/databases/$(database)/documents/stores/$(storeId)/orders/$(request.resource.data.lastStockOrderId)).data.stockAdjustments[productId] is number
+          && request.resource.data.stockQty == resource.data.stockQty - getAfter(/databases/$(database)/documents/stores/$(storeId)/orders/$(request.resource.data.lastStockOrderId)).data.stockAdjustments[productId];
         allow delete: if request.auth != null && request.auth.uid == storeId;
       }
 
