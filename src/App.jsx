@@ -2131,6 +2131,70 @@ const STATUS_COLORS = { New: "#FF9F1C", Confirmed: "#3D5A80", Shipped: "#8338EC"
 const PAYMENT_STATUS_COLORS = { unpaid: "#6B7280", pending: "#D97706", paid: "#15803D", failed: "#DC2626", refunded: "#7C3AED" };
 const PAYMENT_STATUS_LABELS = { unpaid: "Unpaid", pending: "Pending", paid: "Paid", failed: "Failed", refunded: "Refunded" };
 
+function SellerOnboardingChecklist({ store, onOpenTab }) {
+  const status = getStoreStatus(store).status;
+  const items = [
+    {
+      label: "Profile complete",
+      hint: "Store name, WhatsApp aur basic profile details",
+      done: Boolean(store.name?.trim() && store.whatsapp?.trim() && (store.tagline?.trim() || store.about?.trim() || store.logoImg || store.bannerImg)),
+      tab: "profile",
+    },
+    {
+      label: "Product added",
+      hint: "Kam se kam 1 product customer ko dikhna chahiye",
+      done: (store.products || []).length > 0,
+      tab: "products",
+    },
+    {
+      label: "UPI added",
+      hint: "Manual UPI payment ke liye UPI ID set karo",
+      done: Boolean(store.upiId?.trim()),
+      tab: "settings",
+    },
+    {
+      label: "Store published",
+      hint: status === "trial" ? "Free trial mein store live hai" : status === "active" ? "Paid plan mein store live hai" : "Billing se plan activate karo",
+      done: status === "trial" || status === "active",
+      tab: status === "trial" || status === "active" ? null : "billing",
+    },
+  ];
+  const completeCount = items.filter((item) => item.done).length;
+  const progress = Math.round((completeCount / items.length) * 100);
+
+  return (
+    <section aria-labelledby="onboarding-title" style={{ background: T.cream, border: `1px solid ${T.border}`, borderRadius: 12, padding: 16, marginBottom: 20 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 12, flexWrap: "wrap" }}>
+        <div>
+          <h2 id="onboarding-title" style={{ fontFamily: "Inter", fontSize: 16, color: T.ink, margin: 0 }}>🚀 Store setup progress</h2>
+          <p style={{ color: T.muted, fontSize: 12, margin: "4px 0 0" }}>Store ko professional tarike se live karne ke liye ye 4 steps complete karo.</p>
+        </div>
+        <strong style={{ color: completeCount === items.length ? T.mint : T.ink, fontSize: 13 }}>{completeCount}/{items.length} complete</strong>
+      </div>
+      <div role="progressbar" aria-label="Store setup progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow={progress} style={{ height: 8, background: `${T.ink}12`, borderRadius: 99, overflow: "hidden", margin: "14px 0" }}>
+        <div style={{ width: `${progress}%`, height: "100%", background: T.mint, borderRadius: 99, transition: "width 180ms ease" }} />
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(210px, 1fr))", gap: 8 }}>
+        {items.map((item) => (
+          <button
+            key={item.label}
+            type="button"
+            onClick={() => item.tab && onOpenTab(item.tab)}
+            disabled={!item.tab}
+            style={{ display: "flex", alignItems: "flex-start", gap: 9, textAlign: "left", width: "100%", padding: "10px 11px", borderRadius: 9, border: `1px solid ${item.done ? `${T.mint}55` : T.border}`, background: item.done ? `${T.mint}0B` : T.paper, cursor: item.tab ? "pointer" : "default", opacity: item.done ? 0.88 : 1 }}
+          >
+            <span aria-hidden="true" style={{ fontSize: 16, lineHeight: 1.1 }}>{item.done ? "✅" : "○"}</span>
+            <span style={{ minWidth: 0 }}>
+              <span style={{ display: "block", color: T.ink, fontWeight: 800, fontSize: 12.5 }}>{item.label}</span>
+              <span style={{ display: "block", color: T.muted, fontSize: 11, lineHeight: 1.35, marginTop: 2 }}>{item.hint}</span>
+            </span>
+          </button>
+        ))}
+      </div>
+    </section>
+  );
+}
+
 function Dashboard({ store, onAddProduct, onUpdateProduct, onDeleteProduct, onAddCategory, onDeleteCategory, onUpdateStore, onViewStore, onUpdateOrderStatus, onUpdateOrderPaymentStatus, onUpdateReviewStatus, onDeleteReview, saveState }) {
   const [tab, setTab] = useState("products");
   const orders = store.orders || [];
@@ -2292,6 +2356,8 @@ function Dashboard({ store, onAddProduct, onUpdateProduct, onDeleteProduct, onAd
           </div>
         </div>
       </div>
+
+      <SellerOnboardingChecklist store={store} onOpenTab={setTab} />
 
       <div style={{ display: "flex", gap: 8, marginBottom: 20, flexWrap: "wrap" }}>
         {["products", "categories", "orders", "reviews", "billing", "profile", "settings"].map((t) => (
