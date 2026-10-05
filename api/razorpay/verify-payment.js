@@ -12,6 +12,8 @@ function getBody(req) {
   try { return JSON.parse(req.body || "{}"); } catch { return {}; }
 }
 
+const RAZORPAY_PAYMENTS_ENABLED = false;
+
 function getAdminDb() {
   if (!process.env.FIREBASE_SERVICE_ACCOUNT_JSON) throw new Error("FIREBASE_SERVICE_ACCOUNT_JSON missing");
   if (!getApps().length) {
@@ -24,6 +26,7 @@ function getAdminDb() {
 
 export default async function handler(req, res) {
   if (req.method !== "POST") return sendJson(res, 405, { error: "POST method required" });
+  if (!RAZORPAY_PAYMENTS_ENABLED) return sendJson(res, 503, { error: "Razorpay payment abhi temporarily disabled hai" });
   const { razorpay_order_id, razorpay_payment_id, razorpay_signature, storeId, orderId } = getBody(req);
   if (!razorpay_order_id || !razorpay_payment_id || !razorpay_signature || !storeId || !orderId) {
     return sendJson(res, 400, { error: "Payment verification data incomplete hai" });

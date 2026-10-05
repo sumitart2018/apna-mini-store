@@ -156,6 +156,14 @@ const isValidUrl = (v) => !v || /^https?:\/\/.+/.test(v.trim());
 const TRIAL_DAYS = 7;
 const PLAN_PRICES = { monthly: { label: "1 Month", price: 500, days: 30 }, quarterly: { label: "3 Months", price: 1350, days: 90 }, yearly: { label: "1 Year", price: 3000, days: 365 } };
 const SUPER_ADMIN_EMAIL = "sumitart2018@gmail.com";
+// Razorpay stays hidden until seller-specific payouts are implemented with
+// Razorpay Route/Linked Accounts. Keeping this flag in one place makes it
+// easy to enable later without changing the checkout rules in multiple spots.
+const RAZORPAY_ENABLED = false;
+const getEffectivePaymentMethod = (store) => {
+  const method = store?.paymentMethod || "whatsapp";
+  return method === "razorpay" && !RAZORPAY_ENABLED ? "whatsapp" : method;
+};
 // SUPER_ADMIN_PASSWORD removed — Super Admin now authenticates via real
 // Firebase Auth (see firestoreApi.js / superAdminLogin in App.jsx), not a
 // hardcoded plain-text constant. Create that account once in the Firebase
@@ -829,7 +837,7 @@ export default function App() {
     checkoutInFlight.current = true;
     let paymentWindowOpen = false;
     try {
-      const paymentMethod = activeStore.paymentMethod || "whatsapp";
+      const paymentMethod = getEffectivePaymentMethod(activeStore);
       if (paymentMethod === "upi" && !activeStore.upiId?.trim()) {
         flash("Seller ne abhi UPI ID set nahi ki hai");
         return;
@@ -2135,7 +2143,7 @@ function Dashboard({ store, onAddProduct, onUpdateProduct, onDeleteProduct, onAd
   const [assistantStatus, setAssistantStatus] = useState("");
   const [editingId, setEditingId] = useState(null);
   const [npErrors, setNpErrors] = useState({});
-  const [settings, setSettings] = useState({ minOrderValue: store.minOrderValue || 0, freeShippingThreshold: store.freeShippingThreshold || 0, shippingFee: store.shippingFee || 0, gstPercent: store.gstPercent || 0, paymentMethod: store.paymentMethod || "whatsapp", upiId: store.upiId || "" });
+  const [settings, setSettings] = useState({ minOrderValue: store.minOrderValue || 0, freeShippingThreshold: store.freeShippingThreshold || 0, shippingFee: store.shippingFee || 0, gstPercent: store.gstPercent || 0, paymentMethod: getEffectivePaymentMethod(store), upiId: store.upiId || "" });
   const [settingsError, setSettingsError] = useState("");
   const [profile, setProfile] = useState({
     ownerName: store.ownerName || "",
@@ -2484,7 +2492,7 @@ function Dashboard({ store, onAddProduct, onUpdateProduct, onDeleteProduct, onAd
 
       {tab === "settings" && (
         <div style={{ background: T.cream, border: `2px solid ${T.ink}22`, borderRadius: 12, padding: 16 }}>
-          <p style={{ fontSize: 13, opacity: 0.6, marginTop: 0 }}>Ye cart mein minimum order, shipping, GST aur online payment rules control karte hain.</p>
+            <p style={{ fontSize: 13, opacity: 0.6, marginTop: 0 }}>Ye cart mein minimum order, shipping, GST aur available payment rules control karte hain.</p>
           <Field label="Minimum Order Value (₹)" type="number" value={settings.minOrderValue} onChange={(e) => setSettings({ ...settings, minOrderValue: Number(e.target.value) })} />
           <Field label="Free Shipping Threshold (₹) — 0 = disabled" type="number" value={settings.freeShippingThreshold} onChange={(e) => setSettings({ ...settings, freeShippingThreshold: Number(e.target.value) })} />
           <Field label="Shipping Fee (₹, jab free shipping na mile)" type="number" value={settings.shippingFee} onChange={(e) => setSettings({ ...settings, shippingFee: Number(e.target.value) })} />
@@ -2497,12 +2505,11 @@ function Dashboard({ store, onAddProduct, onUpdateProduct, onDeleteProduct, onAd
               <select value={settings.paymentMethod} onChange={(e) => { setSettings({ ...settings, paymentMethod: e.target.value }); setSettingsError(""); }} style={{ display: "block", width: "100%", marginTop: 6, minHeight: 44, padding: "10px 12px", borderRadius: 8, border: `2px solid ${T.ink}22`, fontFamily: "Inter", fontSize: 14 }}>
                 <option value="whatsapp">WhatsApp par payment confirm</option>
                 <option value="upi">UPI Manual (UPI ID + screenshot)</option>
-                <option value="razorpay">Razorpay (online payment)</option>
               </select>
             </label>
             {settings.paymentMethod === "upi" && <Field label="UPI ID (e.g. shopname@upi)" placeholder="yourname@upi" value={settings.upiId} onChange={(e) => { setSettings({ ...settings, upiId: e.target.value }); setSettingsError(""); }} />}
             {settings.paymentMethod === "upi" && <div style={{ background: "#EFF6FF", border: "1px solid #BFDBFE", color: "#1D4ED8", borderRadius: 10, padding: 12, fontSize: 12, lineHeight: 1.5, marginBottom: 14 }}>Customer ke phone mein UPI app khulega. Payment verify karke Orders tab mein status <strong>Paid</strong> kar dena.</div>}
-            {settings.paymentMethod === "razorpay" && <div style={{ background: "#FFF7ED", border: "1px solid #FED7AA", color: "#9A3412", borderRadius: 10, padding: 12, fontSize: 12, lineHeight: 1.5, marginBottom: 14 }}>Razorpay platform owner dwara configured hai. Seller ko alag se keys dalne ki zaroorat nahi hai.</div>}
+            {!RAZORPAY_ENABLED && <div style={{ background: "#F8FAFC", border: `1px solid ${T.border}`, color: T.muted, borderRadius: 10, padding: 12, fontSize: 12, lineHeight: 1.5, marginBottom: 14 }}>Online Razorpay payment abhi temporary unavailable hai. Seller-specific Razorpay payout setup hone ke baad ye option enable hoga.</div>}
             {settingsError && <div style={{ color: T.red, fontSize: 12, marginBottom: 10 }}>{settingsError}</div>}
           </div>
           <Button onClick={() => {
@@ -3666,6 +3673,7 @@ function Storefront({ store, cart, wishlist, onBack, onAdd, onChangeQty, onRemov
   const [checkoutStep, setCheckoutStep] = useState(false);
   const [customer, setCustomer] = useState({ name: "", phone: "", address: "" });
   const [formErrors, setFormErrors] = useState({});
+  const paymentMethod = getEffectivePaymentMethod(store);
 
   useEffect(() => {
     if (!store?.id) return undefined;
@@ -3983,10 +3991,10 @@ function Storefront({ store, cart, wishlist, onBack, onAdd, onChangeQty, onRemov
                 <div style={{ display: "flex", justifyContent: "space-between", fontWeight: 800, fontFamily: "Inter", fontSize: 16, marginBottom: 12 }}>
                   <span>Total Amount</span><span>₹{total.toFixed(2)}</span>
                 </div>
-                <div style={{ background: store.paymentMethod === "razorpay" ? "#F0FDF4" : "#EFF6FF", border: `1px solid ${store.paymentMethod === "razorpay" ? "#BBF7D0" : "#BFDBFE"}`, color: store.paymentMethod === "razorpay" ? "#166534" : "#1D4ED8", borderRadius: 9, padding: 10, fontSize: 12, lineHeight: 1.45, marginBottom: 10 }}>
-                  {store.paymentMethod === "razorpay" && "🔒 Secure Razorpay checkout — payment ke baad order automatically verify hoga."}
-                  {store.paymentMethod === "upi" && `📲 Mobile par UPI app khulega: ${store.upiId || "UPI ID not set"}. Desktop par UPI ID WhatsApp mein milegi — payment ke baad screenshot bhejna.`}
-                  {(!store.paymentMethod || store.paymentMethod === "whatsapp") && "💬 Order WhatsApp par confirm hoga. Payment status seller dashboard se manage karega."}
+                <div style={{ background: paymentMethod === "razorpay" ? "#F0FDF4" : "#EFF6FF", border: `1px solid ${paymentMethod === "razorpay" ? "#BBF7D0" : "#BFDBFE"}`, color: paymentMethod === "razorpay" ? "#166534" : "#1D4ED8", borderRadius: 9, padding: 10, fontSize: 12, lineHeight: 1.45, marginBottom: 10 }}>
+                  {paymentMethod === "razorpay" && "🔒 Secure Razorpay checkout — payment ke baad order automatically verify hoga."}
+                  {paymentMethod === "upi" && `📲 Mobile par UPI app khulega: ${store.upiId || "UPI ID not set"}. Desktop par UPI ID WhatsApp mein milegi — payment ke baad screenshot bhejna.`}
+                  {paymentMethod === "whatsapp" && "💬 Order WhatsApp par confirm hoga. Payment status seller dashboard se manage karega."}
                 </div>
                 <Button variant="mint" style={{ width: "100%" }} disabled={!customer.name.trim() || !customer.phone.trim()} onClick={() => {
                   if (!isValidPhone(customer.phone)) { setFormErrors({ phone: "Sahi 10-digit mobile number daalo" }); return; }
@@ -3995,7 +4003,7 @@ function Storefront({ store, cart, wishlist, onBack, onAdd, onChangeQty, onRemov
                   setCheckoutStep(false);
                   setCustomer({ name: "", phone: "", address: "" });
                 }}>
-                  {store.paymentMethod === "razorpay" ? "Pay Securely with Razorpay →" : store.paymentMethod === "upi" ? "Order + UPI Payment →" : "Checkout to WhatsApp →"}
+                  {paymentMethod === "razorpay" ? "Pay Securely with Razorpay →" : paymentMethod === "upi" ? "Order + UPI Payment →" : "Checkout to WhatsApp →"}
                 </Button>
               </div>
             )}

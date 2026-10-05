@@ -8,8 +8,11 @@ function getBody(req) {
   try { return JSON.parse(req.body || "{}"); } catch { return {}; }
 }
 
+const RAZORPAY_PAYMENTS_ENABLED = false;
+
 export default async function handler(req, res) {
   if (req.method !== "POST") return sendJson(res, 405, { error: "POST method required" });
+  if (!RAZORPAY_PAYMENTS_ENABLED) return sendJson(res, 503, { error: "Razorpay payment abhi temporarily disabled hai" });
 
   const keyId = process.env.RAZORPAY_KEY_ID;
   const keySecret = process.env.RAZORPAY_KEY_SECRET;
