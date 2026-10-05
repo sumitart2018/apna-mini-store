@@ -2496,7 +2496,7 @@ function Dashboard({ store, onAddProduct, onUpdateProduct, onDeleteProduct, onAd
             </label>
             {settings.paymentMethod === "upi" && <Field label="UPI ID (e.g. shopname@upi)" placeholder="yourname@upi" value={settings.upiId} onChange={(e) => { setSettings({ ...settings, upiId: e.target.value }); setSettingsError(""); }} />}
             {settings.paymentMethod === "upi" && <div style={{ background: "#EFF6FF", border: "1px solid #BFDBFE", color: "#1D4ED8", borderRadius: 10, padding: 12, fontSize: 12, lineHeight: 1.5, marginBottom: 14 }}>Customer ke phone mein UPI app khulega. Payment verify karke Orders tab mein status <strong>Paid</strong> kar dena.</div>}
-            {settings.paymentMethod === "razorpay" && <div style={{ background: "#FFF7ED", border: "1px solid #FED7AA", color: "#9A3412", borderRadius: 10, padding: 12, fontSize: 12, lineHeight: 1.5, marginBottom: 14 }}>Razorpay live karne ke liye Razorpay account aur Vercel Environment Variables <strong>RAZORPAY_KEY_ID</strong>, <strong>RAZORPAY_KEY_SECRET</strong>, <strong>FIREBASE_SERVICE_ACCOUNT_JSON</strong> add karne honge.</div>}
+            {settings.paymentMethod === "razorpay" && <div style={{ background: "#FFF7ED", border: "1px solid #FED7AA", color: "#9A3412", borderRadius: 10, padding: 12, fontSize: 12, lineHeight: 1.5, marginBottom: 14 }}>Razorpay platform owner dwara configured hai. Seller ko alag se keys dalne ki zaroorat nahi hai.</div>}
             {settingsError && <div style={{ color: T.red, fontSize: 12, marginBottom: 10 }}>{settingsError}</div>}
           </div>
           <Button onClick={() => {
