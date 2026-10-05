@@ -23,7 +23,8 @@ service cloud.firestore {
               "name", "tagline", "whatsapp", "color", "theme",
               "minOrderValue", "freeShippingThreshold", "shippingFee", "gstPercent",
               "categories", "ownerName", "altPhone", "address", "gstin", "about",
-              "facebook", "instagram", "youtube", "bannerImg", "logoImg"
+              "facebook", "instagram", "youtube", "bannerImg", "logoImg",
+              "seoTitle", "seoDescription"
             ])
           )
         )
@@ -78,6 +79,29 @@ service cloud.firestore {
           && request.resource.data.diff(resource.data).affectedKeys().hasOnly(["status"])
           && request.resource.data.status in ["New", "Confirmed", "Shipped", "Delivered", "Cancelled"];
         allow delete: if false;
+      }
+
+      match /reviews/{reviewId} {
+        // Anyone can submit feedback, but it always starts as pending and is
+        // never visible publicly until the store owner approves it.
+        allow create: if request.resource.data.storeId == storeId
+          && request.resource.data.status == "pending"
+          && request.resource.data.customerName is string
+          && request.resource.data.customerName.size() > 0
+          && request.resource.data.customerName.size() <= 80
+          && request.resource.data.rating is number
+          && request.resource.data.rating >= 1
+          && request.resource.data.rating <= 5
+          && request.resource.data.comment is string
+          && request.resource.data.comment.size() > 0
+          && request.resource.data.comment.size() <= 600;
+        allow read: if (request.auth != null && request.auth.uid == storeId)
+          || resource.data.status == "approved";
+        allow update: if request.auth != null
+          && request.auth.uid == storeId
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(["status", "ownerReply"])
+          && request.resource.data.status in ["pending", "approved", "hidden"];
+        allow delete: if request.auth != null && request.auth.uid == storeId;
       }
     }
 

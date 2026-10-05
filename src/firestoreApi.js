@@ -8,6 +8,7 @@
 //                                        keeps a seller with 100 product photos from ever
 //                                        blowing up a single document again)
 //   stores/{uid}/orders/{orderId}     — subcollection
+//   stores/{uid}/reviews/{reviewId}   — customer reviews, moderated by owner
 //
 // Every product/order document also stores a `storeId` field so that
 // collectionGroup queries (used to build the platform-wide product/order
@@ -37,6 +38,7 @@ import {
   serverTimestamp,
   query,
   orderBy as fsOrderBy,
+  where as fsWhere,
 } from "firebase/firestore";
 import { ref, uploadBytes, getDownloadURL, deleteObject } from "firebase/storage";
 import { auth, db, storage, googleProvider } from "./firebase";
@@ -200,6 +202,53 @@ export async function trackPlatformVisit() {
 
 export async function trackStoreVisit(storeId) {
   await updateDoc(doc(db, "stores", storeId), { visitorCount: increment(1) });
+}
+
+// Reviews are public only after the store owner approves them. The public
+// storefront uses the approved listener; the owner dashboard uses the full
+// listener to moderate pending/hidden feedback.
+function mapReviews(snap) {
+  return snap.docs
+    .map((reviewDoc) => ({ id: reviewDoc.id, ...reviewDoc.data() }))
+    .sort((a, b) => {
+      const time = (value) => value?.toMillis ? value.toMillis() : (value ? new Date(value).getTime() : 0);
+      return time(b.createdAt) - time(a.createdAt);
+    });
+}
+
+export function watchApprovedReviews(storeId, onChange, onError) {
+  return onSnapshot(
+    query(collection(db, "stores", storeId, "reviews"), fsWhere("status", "==", "approved")),
+    (snap) => onChange(mapReviews(snap)),
+    (err) => { console.error("watchApprovedReviews failed:", err); if (onError) onError(err); }
+  );
+}
+
+export function watchReviewsForStore(storeId, onChange, onError) {
+  return onSnapshot(
+    collection(db, "stores", storeId, "reviews"),
+    (snap) => onChange(mapReviews(snap)),
+    (err) => { console.error("watchReviewsForStore failed:", err); if (onError) onError(err); }
+  );
+}
+
+export async function createReview(storeId, review) {
+  await addDoc(collection(db, "stores", storeId, "reviews"), {
+    storeId,
+    customerName: review.customerName.trim(),
+    rating: Number(review.rating),
+    comment: review.comment.trim(),
+    status: "pending",
+    createdAt: serverTimestamp(),
+  });
+}
+
+export async function setReviewStatus(storeId, reviewId, status) {
+  await updateDoc(doc(db, "stores", storeId, "reviews", reviewId), { status });
+}
+
+export async function deleteReview(storeId, reviewId) {
+  await deleteDoc(doc(db, "stores", storeId, "reviews", reviewId));
 }
 
 // ---------- Products ----------

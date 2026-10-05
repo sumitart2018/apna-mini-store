@@ -7,7 +7,8 @@ import {
   setStorePlan, setStoreBlocked, setTrialStartedAt,
   createProduct, editProduct, removeProduct,
   createOrder, setOrderStatus, uploadStoreImage, resetSellerPassword, signInWithGoogle,
-  trackPlatformVisit, trackStoreVisit
+  trackPlatformVisit, trackStoreVisit, watchReviewsForStore, watchApprovedReviews,
+  createReview, setReviewStatus, deleteReview
 } from "./firestoreApi";
 
 /*
@@ -456,6 +457,7 @@ export default function App() {
   const [storeProfiles, setStoreProfiles] = useState([]);
   const [productsByStore, setProductsByStore] = useState({});
   const [ordersByStore, setOrdersByStore] = useState({});
+  const [reviewsByStore, setReviewsByStore] = useState({});
   const [platformVisitors, setPlatformVisitors] = useState(0);
   // undefined = auth state not yet resolved, null = logged out, object = logged in
   const [authUser, setAuthUser] = useState(undefined);
@@ -482,8 +484,9 @@ export default function App() {
       ...s,
       products: productsByStore[s.id] || [],
       orders: ordersByStore[s.id] || [],
+      reviews: reviewsByStore[s.id] || [],
     })),
-    [storeProfiles, productsByStore, ordersByStore]
+    [storeProfiles, productsByStore, ordersByStore, reviewsByStore]
   );
 
   
@@ -535,12 +538,16 @@ export default function App() {
     if (authUser === undefined) return;
     if (!authUser || isSuperAdmin) {
       setOrdersByStore({});
+      setReviewsByStore({});
       return;
     }
     const unsubOrders = watchOrdersForStore(authUser.uid, (orders) => {
       setOrdersByStore({ [authUser.uid]: orders });
     }, (err) => { setLoadError({ err, source: "orders" }); setLoading(false); });
-    return () => unsubOrders();
+    const unsubReviews = watchReviewsForStore(authUser.uid, (reviews) => {
+      setReviewsByStore({ [authUser.uid]: reviews });
+    }, (err) => { console.warn("Reviews load nahi hue:", err); });
+    return () => { unsubOrders(); unsubReviews(); };
   }, [authUser, isSuperAdmin]);
 
   // On first load, if the browser already has a persisted login, jump
@@ -582,21 +589,42 @@ export default function App() {
   }, [stores]);
 
   useEffect(() => {
-    if (view === "storefront" && activeStore) {
-      document.title = `${activeStore.name} | Apna Mini Store`;
-      const description = activeStore.tagline || `${activeStore.name} ka online store — WhatsApp par order karein.`;
-      let meta = document.querySelector('meta[name="description"]');
-      if (!meta) {
-        meta = document.createElement("meta");
-        meta.name = "description";
-        document.head.appendChild(meta);
+    const isStorefront = view === "storefront" && activeStore;
+    const title = isStorefront
+      ? (activeStore.seoTitle || `${activeStore.name} | Apna Mini Store`).slice(0, 60)
+      : "Apna Mini Store — Mini Store Platform";
+    const description = isStorefront
+      ? (activeStore.seoDescription || activeStore.tagline || `${activeStore.name} ka online store — WhatsApp par order karein.`).slice(0, 160)
+      : "Apna Mini Store — Apni Dukaan. Apna Brand. Apna Online Store.";
+    const url = window.location.href;
+    document.title = title;
+    const setHeadTag = (selector, attributes, content) => {
+      let element = document.head.querySelector(selector);
+      if (!element) {
+        element = document.createElement("meta");
+        Object.entries(attributes).forEach(([key, value]) => element.setAttribute(key, value));
+        document.head.appendChild(element);
       }
-      meta.content = description;
-    } else {
-      document.title = "Apna Mini Store — Mini Store Platform";
-      const meta = document.querySelector('meta[name="description"]');
-      if (meta) meta.content = "Apna Mini Store — Apni Dukaan. Apna Brand. Apna Online Store.";
+      element.setAttribute("content", content);
+    };
+    setHeadTag('meta[name="description"]', { name: "description" }, description);
+    setHeadTag('meta[property="og:title"]', { property: "og:title" }, title);
+    setHeadTag('meta[property="og:description"]', { property: "og:description" }, description);
+    setHeadTag('meta[property="og:type"]', { property: "og:type" }, "website");
+    setHeadTag('meta[property="og:url"]', { property: "og:url" }, url);
+    if (isStorefront && (activeStore.bannerImg || activeStore.logoImg)) {
+      setHeadTag('meta[property="og:image"]', { property: "og:image" }, activeStore.bannerImg || activeStore.logoImg);
     }
+    setHeadTag('meta[name="twitter:card"]', { name: "twitter:card" }, "summary_large_image");
+    setHeadTag('meta[name="twitter:title"]', { name: "twitter:title" }, title);
+    setHeadTag('meta[name="twitter:description"]', { name: "twitter:description" }, description);
+    let canonical = document.head.querySelector('link[rel="canonical"]');
+    if (!canonical) {
+      canonical = document.createElement("link");
+      canonical.rel = "canonical";
+      document.head.appendChild(canonical);
+    }
+    canonical.href = url;
   }, [view, activeStore]);
   const ownerStore = stores.find((s) => s.id === session);
 
@@ -610,6 +638,8 @@ export default function App() {
       await signUpSeller(email, password, {
         name, tagline, whatsapp,
         slug: slugify(name) + "-" + uid().slice(0, 4),
+        seoTitle: "",
+        seoDescription: "",
         color: color || T.marigold,
         theme: theme || "classic",
         trialStartedAt: new Date().toISOString(),
@@ -770,6 +800,19 @@ export default function App() {
     try { await setOrderStatus(session, orderId, status); setSaveState("idle"); } catch (e) { setSaveState("error"); flash("Status update nahi hua"); }
   };
 
+  const updateReviewStatus = async (reviewId, status) => {
+    setSaveState("saving");
+    try { await setReviewStatus(session, reviewId, status); setSaveState("idle"); flash(status === "approved" ? "Review approve ho gaya" : "Review hide ho gaya"); }
+    catch (e) { setSaveState("error"); flash("Review update nahi hua"); }
+  };
+
+  const removeReview = async (reviewId) => {
+    if (!window.confirm("Ye review permanently delete karna hai?")) return;
+    setSaveState("saving");
+    try { await deleteReview(session, reviewId); setSaveState("idle"); flash("Review delete ho gaya"); }
+    catch (e) { setSaveState("error"); flash("Review delete nahi hua"); }
+  };
+
   const activatePlan = async (storeId, planType) => {
     const info = PLAN_PRICES[planType];
     try {
@@ -854,7 +897,7 @@ export default function App() {
         <SuperAdminDashboard stores={stores} platformVisitors={platformVisitors} onActivate={activatePlan} onBlock={toggleBlockStore} onExtendTrial={extendTrial} onLogout={() => { signOutUser(); setView("directory"); }} onResetPassword={sendResetEmail} />
       )}
       {view === "dashboard" && ownerStore && (
-        <Dashboard store={ownerStore} onAddProduct={addProduct} onUpdateProduct={updateProduct} onDeleteProduct={deleteProduct} onAddCategory={addCategory} onDeleteCategory={deleteCategory} onUpdateStore={updateOwnerStore} onViewStore={() => openStore(ownerStore.id)} onUpdateOrderStatus={updateOrderStatus} saveState={saveState} />
+        <Dashboard store={ownerStore} onAddProduct={addProduct} onUpdateProduct={updateProduct} onDeleteProduct={deleteProduct} onAddCategory={addCategory} onDeleteCategory={deleteCategory} onUpdateStore={updateOwnerStore} onViewStore={() => openStore(ownerStore.id)} onUpdateOrderStatus={updateOrderStatus} onUpdateReviewStatus={updateReviewStatus} onDeleteReview={removeReview} saveState={saveState} />
       )}
       {view === "storefront" && activeStore && (
         <Storefront store={activeStore} cart={cart} wishlist={wishlist} onBack={() => {
@@ -1937,9 +1980,10 @@ function LoginForm({ onSubmit, onSignup, onGoogleLogin }) {
 
 const STATUS_COLORS = { New: "#FF9F1C", Confirmed: "#3D5A80", Shipped: "#8338EC", Delivered: "#1B9C85", Cancelled: "#E03131" };
 
-function Dashboard({ store, onAddProduct, onUpdateProduct, onDeleteProduct, onAddCategory, onDeleteCategory, onUpdateStore, onViewStore, onUpdateOrderStatus, saveState }) {
+function Dashboard({ store, onAddProduct, onUpdateProduct, onDeleteProduct, onAddCategory, onDeleteCategory, onUpdateStore, onViewStore, onUpdateOrderStatus, onUpdateReviewStatus, onDeleteReview, saveState }) {
   const [tab, setTab] = useState("products");
   const orders = store.orders || [];
+  const reviews = store.reviews || [];
   const [orderFilter, setOrderFilter] = useState("All");
   const [newCat, setNewCat] = useState("");
   const [np, setNp] = useState({ name: "", price: "", mrp: "", category: store.categories[0] || "", inStock: true, sizes: "", colors: "", weights: "", img: "", description: "", tags: "" });
@@ -1959,6 +2003,8 @@ function Dashboard({ store, onAddProduct, onUpdateProduct, onDeleteProduct, onAd
     youtube: store.youtube || "",
     bannerImg: store.bannerImg || "",
     logoImg: store.logoImg || "",
+    seoTitle: store.seoTitle || "",
+    seoDescription: store.seoDescription || "",
     theme: store.theme || "classic",
   });
   const [profileErrors, setProfileErrors] = useState({});
@@ -2084,9 +2130,9 @@ function Dashboard({ store, onAddProduct, onUpdateProduct, onDeleteProduct, onAd
       </div>
 
       <div style={{ display: "flex", gap: 8, marginBottom: 20, flexWrap: "wrap" }}>
-        {["products", "categories", "orders", "billing", "profile", "settings"].map((t) => (
+        {["products", "categories", "orders", "reviews", "billing", "profile", "settings"].map((t) => (
           <button key={t} onClick={() => setTab(t)} style={{ padding: "10px 18px", minHeight: 44, borderRadius: 8, border: `1px solid ${T.border}`, background: tab === t ? T.marigold : "transparent", fontFamily: "Inter", fontWeight: 700, cursor: "pointer", color: tab === t ? "#fff" : T.ink, textTransform: "capitalize", position: "relative" }}>
-            {t === "products" ? "Products" : t === "categories" ? "Categories" : t === "orders" ? `Orders${orders.length ? ` (${orders.length})` : ""}` : t === "billing" ? "Billing" : t === "profile" ? "Store Profile" : "Cart Settings"}
+            {t === "products" ? "Products" : t === "categories" ? "Categories" : t === "orders" ? `Orders${orders.length ? ` (${orders.length})` : ""}` : t === "reviews" ? `Reviews${reviews.filter((review) => review.status === "pending").length ? ` (${reviews.filter((review) => review.status === "pending").length})` : ""}` : t === "billing" ? "Billing" : t === "profile" ? "Store Profile" : "Cart Settings"}
           </button>
         ))}
       </div>
@@ -2168,6 +2214,10 @@ function Dashboard({ store, onAddProduct, onUpdateProduct, onDeleteProduct, onAd
         </div>
       )}
 
+      {tab === "reviews" && (
+        <ReviewsModeration reviews={reviews} onUpdateStatus={onUpdateReviewStatus} onDelete={onDeleteReview} />
+      )}
+
       {tab === "profile" && (
         <div style={{ background: T.cream, border: `2px solid ${T.ink}22`, borderRadius: 12, padding: 16, maxWidth: 460 }}>
           <p style={{ fontSize: 13, opacity: 0.6, marginTop: 0 }}>Ye details customers ko aapke store page par dikhengi — Yuvi Fashion jaisa "Contact Us" section.</p>
@@ -2196,6 +2246,25 @@ function Dashboard({ store, onAddProduct, onUpdateProduct, onDeleteProduct, onAd
           </div>
 
           <ThemePicker value={profile.theme} onChange={(theme) => setProfile({ ...profile, theme })} />
+
+          <div style={{ borderTop: `1px solid ${T.border}`, margin: "20px 0", paddingTop: 18 }}>
+            <div style={{ fontFamily: "Inter", fontWeight: 800, fontSize: 15, color: T.ink, marginBottom: 4 }}>Basic SEO Tools</div>
+            <p style={{ fontSize: 12, color: T.muted, margin: "0 0 14px", lineHeight: 1.5 }}>Google search preview ke liye title aur description likho. Khali chhodoge to store name/tagline automatically use honge.</p>
+            <label style={{ display: "block", marginBottom: 14 }}>
+              <span style={{ fontFamily: "Inter", fontWeight: 600, fontSize: 13, color: T.ink, opacity: 0.75 }}>SEO Title <span style={{ fontWeight: 400 }}>({profile.seoTitle.length}/60)</span></span>
+              <input maxLength={60} value={profile.seoTitle} onChange={(e) => setProfile({ ...profile, seoTitle: e.target.value })} placeholder={`${store.name} | Apna Mini Store`} style={{ display: "block", width: "100%", marginTop: 6, minHeight: 44, padding: "10px 12px", borderRadius: 8, border: `2px solid ${T.ink}22`, fontFamily: "Inter", fontSize: 14, boxSizing: "border-box" }} />
+            </label>
+            <label style={{ display: "block", marginBottom: 14 }}>
+              <span style={{ fontFamily: "Inter", fontWeight: 600, fontSize: 13, color: T.ink, opacity: 0.75 }}>SEO Description <span style={{ fontWeight: 400 }}>({profile.seoDescription.length}/160)</span></span>
+              <textarea maxLength={160} rows={3} value={profile.seoDescription} onChange={(e) => setProfile({ ...profile, seoDescription: e.target.value })} placeholder={`${store.name} ka online store — WhatsApp par order karein.`} style={{ display: "block", width: "100%", marginTop: 6, padding: "10px 12px", borderRadius: 8, border: `2px solid ${T.ink}22`, fontFamily: "Inter", fontSize: 14, boxSizing: "border-box", resize: "vertical" }} />
+            </label>
+            <div style={{ background: "#F8FAFC", border: `1px solid ${T.border}`, borderRadius: 10, padding: 12 }}>
+              <div style={{ fontSize: 11, color: T.muted, marginBottom: 5 }}>Google preview</div>
+              <div style={{ color: "#1A0DAB", fontSize: 15, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{profile.seoTitle || `${store.name} | Apna Mini Store`}</div>
+              <div style={{ color: "#15803D", fontSize: 11.5, margin: "3px 0" }}>{storeLink}</div>
+              <div style={{ color: T.muted, fontSize: 12, lineHeight: 1.4 }}>{profile.seoDescription || profile.about || store.tagline || "Apna online store — WhatsApp par order karein."}</div>
+            </div>
+          </div>
 
           <div style={{ marginBottom: 16 }}>
             <span style={{ fontFamily: "Inter", fontWeight: 600, fontSize: 13, color: T.ink, opacity: 0.75, display: "block", marginBottom: 6 }}>Store Banner (bada, page ke top pe dikhega)</span>
@@ -2536,6 +2605,58 @@ function TemplatePreview({ template, viewport = "desktop", compact = false }) {
   );
 }
 
+function ReviewSection({ store, reviews, onSubmit, colors = {} }) {
+  const [customerName, setCustomerName] = useState("");
+  const [comment, setComment] = useState("");
+  const [rating, setRating] = useState(5);
+  const [submitState, setSubmitState] = useState("idle");
+  const approved = (reviews || []).filter((review) => review.status === "approved");
+  const average = approved.length ? approved.reduce((sum, review) => sum + Number(review.rating || 0), 0) / approved.length : 0;
+  const textColor = colors.text || T.ink;
+  const mutedColor = colors.muted || T.muted;
+  const borderColor = colors.border || T.border;
+  const accent = colors.accent || T.mint;
+
+  const submit = async (event) => {
+    event.preventDefault();
+    if (!customerName.trim() || !comment.trim()) return;
+    setSubmitState("saving");
+    try {
+      await onSubmit({ customerName, rating, comment });
+      setCustomerName("");
+      setComment("");
+      setRating(5);
+      setSubmitState("success");
+      setTimeout(() => setSubmitState("idle"), 3500);
+    } catch (error) {
+      setSubmitState("error");
+    }
+  };
+
+  return (
+    <section aria-labelledby="store-reviews" style={{ marginTop: 30, paddingTop: 24, borderTop: `1px solid ${borderColor}`, color: textColor }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "end", gap: 12, flexWrap: "wrap", marginBottom: 14 }}>
+        <div><h2 id="store-reviews" style={{ fontSize: 19, margin: 0, fontWeight: 800 }}>Customer Reviews</h2><div style={{ color: mutedColor, fontSize: 12, marginTop: 4 }}>Aapka feedback hamare liye important hai</div></div>
+        {approved.length > 0 && <div style={{ textAlign: "right" }}><div style={{ fontWeight: 800, fontSize: 18 }}>⭐ {average.toFixed(1)} / 5</div><div style={{ color: mutedColor, fontSize: 11 }}>{approved.length} approved review{approved.length === 1 ? "" : "s"}</div></div>}
+      </div>
+      {approved.length > 0 && <div style={{ display: "grid", gap: 10, marginBottom: 18 }}>{approved.slice(0, 6).map((review) => <div key={review.id} style={{ border: `1px solid ${borderColor}`, borderRadius: 10, padding: 12 }}><div style={{ display: "flex", justifyContent: "space-between", gap: 8 }}><strong style={{ fontSize: 13 }}>{review.customerName}</strong><ReviewStars rating={Number(review.rating) || 0} size={13} /></div><p style={{ margin: "6px 0 0", fontSize: 13, lineHeight: 1.45, color: mutedColor }}>{review.comment}</p></div>)}</div>}
+      <form onSubmit={submit} style={{ border: `1px solid ${borderColor}`, borderRadius: 12, padding: 14, background: `${accent}08` }}>
+        <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 10 }}>Apna review likhiye</div>
+        <div style={{ display: "flex", gap: 5, marginBottom: 10 }} aria-label="Rating select karo">
+          {[1, 2, 3, 4, 5].map((star) => <button type="button" key={star} onClick={() => setRating(star)} aria-label={`${star} star`} style={{ border: "none", background: "transparent", color: star <= rating ? "#F59E0B" : "#CBD5E1", cursor: "pointer", padding: 2, fontSize: 24, lineHeight: 1 }}>{star <= rating ? "★" : "☆"}</button>)}
+        </div>
+        <div style={{ display: "grid", gap: 8 }}>
+          <input required maxLength={80} value={customerName} onChange={(event) => setCustomerName(event.target.value)} placeholder="Aapka naam" aria-label="Aapka naam" style={{ minHeight: 42, padding: "9px 11px", borderRadius: 8, border: `1px solid ${borderColor}`, fontFamily: "Inter", boxSizing: "border-box" }} />
+          <textarea required maxLength={600} rows={3} value={comment} onChange={(event) => setComment(event.target.value)} placeholder="Product ya service ke baare mein batayein..." aria-label="Review" style={{ padding: "9px 11px", borderRadius: 8, border: `1px solid ${borderColor}`, fontFamily: "Inter", resize: "vertical", boxSizing: "border-box" }} />
+          <button type="submit" disabled={submitState === "saving"} style={{ minHeight: 42, border: "none", borderRadius: 8, background: accent, color: "#fff", fontWeight: 700, cursor: submitState === "saving" ? "wait" : "pointer" }}>{submitState === "saving" ? "Submit ho raha hai..." : "Review Submit Karo"}</button>
+        </div>
+        {submitState === "success" && <div role="status" style={{ color: "#15803D", fontSize: 12, marginTop: 8 }}>✅ Review submit ho gaya. Owner approve karega, phir public store par dikhega.</div>}
+        {submitState === "error" && <div role="alert" style={{ color: T.red, fontSize: 12, marginTop: 8 }}>Review save nahi hua — internet check karke dobara try karo.</div>}
+      </form>
+    </section>
+  );
+}
+
 function StoreViewCount({ store, color = T.muted, valueColor = T.ink, borderColor = T.border, marginTop = 12 }) {
   const views = Number(store.visitorCount) || 0;
   return (
@@ -2545,7 +2666,7 @@ function StoreViewCount({ store, color = T.muted, valueColor = T.ink, borderColo
   );
 }
 
-function ModernStorefrontBody({ store, cart, wishlist, onBack, onAdd, onWishlist, setShowCart, filtered, filter, setFilter, search, setSearch, cartQtyForKey, onChangeQty }) {
+function ModernStorefrontBody({ store, cart, wishlist, onBack, onAdd, onWishlist, setShowCart, filtered, filter, setFilter, search, setSearch, cartQtyForKey, onChangeQty, reviews, onReviewSubmit }) {
   const P = getThemePreset(store.theme);
   const shareStore = async () => {
     const shareData = { title: store.name, text: `${store.name} — check out our store!`, url: window.location.href };
@@ -2673,6 +2794,8 @@ function ModernStorefrontBody({ store, cart, wishlist, onBack, onAdd, onWishlist
         <button className="sads-storebtn" onClick={() => setShowCart(true)} style={{ width: "100%", marginTop: 20, minHeight: 50, background: "#25D366", color: "#fff", border: "none", borderRadius: 12, fontWeight: 700, fontSize: 15, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
           <MessageCircle size={18} strokeWidth={2} /> Order on WhatsApp <span aria-hidden="true">→</span>
         </button>
+
+        <ReviewSection store={store} reviews={reviews} onSubmit={onReviewSubmit} colors={{ text: P.textColor, muted: P.mutedColor, border: P.borderColor, accent: P.accent }} />
 
         <div id="ms-profile" style={{ marginTop: 24, textAlign: "center", fontSize: 12, color: P.mutedColor }}>
           {store.whatsapp && <div>📞 {store.whatsapp}{store.altPhone ? `, ${store.altPhone}` : ""}</div>}
@@ -2971,7 +3094,7 @@ const UMProductCard = React.memo(function UMProductCard({ p, wished, cartQtyForK
   );
 });
 
-function UniversalModernBody({ store, cart, wishlist, onBack, onAdd, onWishlist, setShowCart, filtered, filter, setFilter, search, setSearch, cartQtyForKey, onChangeQty }) {
+function UniversalModernBody({ store, cart, wishlist, onBack, onAdd, onWishlist, setShowCart, filtered, filter, setFilter, search, setSearch, cartQtyForKey, onChangeQty, reviews, onReviewSubmit }) {
   const [palette, setPalette] = useState(UM_DEFAULT_PALETTE);
   const [dark, setDark] = useState(false);
   const [showSearch, setShowSearch] = useState(false);
@@ -3264,6 +3387,8 @@ function UniversalModernBody({ store, cart, wishlist, onBack, onAdd, onWishlist,
           <MessageCircle size={18} /> Order on WhatsApp <span aria-hidden="true">→</span>
         </button>
 
+        <ReviewSection store={store} reviews={reviews} onSubmit={onReviewSubmit} colors={{ text, muted, border, accent: palette.secondary }} />
+
         {/* Footer */}
         <div id="um-profile" style={{ marginTop: 32, paddingTop: 24, borderTop: `1px solid ${border}` }}>
           <div style={{ display: "flex", gap: 10, marginBottom: 16 }}>
@@ -3335,9 +3460,19 @@ function Storefront({ store, cart, wishlist, onBack, onAdd, onChangeQty, onRemov
   const [filter, setFilter] = useState("All");
   const [search, setSearch] = useState("");
   const [sort, setSort] = useState("featured");
+  const [reviews, setReviews] = useState([]);
   const [checkoutStep, setCheckoutStep] = useState(false);
   const [customer, setCustomer] = useState({ name: "", phone: "", address: "" });
   const [formErrors, setFormErrors] = useState({});
+
+  useEffect(() => {
+    if (!store?.id) return undefined;
+    return watchApprovedReviews(store.id, setReviews, (error) => console.warn("Public reviews load nahi hue:", error));
+  }, [store?.id]);
+
+  const handleReviewSubmit = async (review) => {
+    await createReview(store.id, review);
+  };
 
   useBodyScrollLock(showCart);
   useEffect(() => {
@@ -3402,14 +3537,14 @@ function Storefront({ store, cart, wishlist, onBack, onAdd, onChangeQty, onRemov
           store={store} cart={cart} wishlist={wishlist} onBack={onBack} onAdd={onAdd}
           onWishlist={onWishlist} setShowCart={setShowCart} filtered={filtered} filter={filter}
           setFilter={setFilter} search={search} setSearch={setSearch} cartQtyForKey={cartQtyForKey}
-          onChangeQty={onChangeQty}
+          onChangeQty={onChangeQty} reviews={reviews} onReviewSubmit={handleReviewSubmit}
         />
       ) : store.theme && store.theme !== "classic" ? (
         <ModernStorefrontBody
           store={store} cart={cart} wishlist={wishlist} onBack={onBack} onAdd={onAdd}
           onWishlist={onWishlist} setShowCart={setShowCart} filtered={filtered} filter={filter}
           setFilter={setFilter} search={search} setSearch={setSearch} cartQtyForKey={cartQtyForKey}
-          onChangeQty={onChangeQty}
+          onChangeQty={onChangeQty} reviews={reviews} onReviewSubmit={handleReviewSubmit}
         />
       ) : (
         <>
@@ -3561,6 +3696,8 @@ function Storefront({ store, cart, wishlist, onBack, onAdd, onChangeQty, onRemov
           </div>
         )}
 
+        <ReviewSection store={store} reviews={reviews} onSubmit={handleReviewSubmit} />
+
         <div style={{ textAlign: "center", fontSize: 13, color: T.muted, marginTop: 36 }}>
           © {new Date().getFullYear()} {store.name}. All Rights Reserved.
         </div>
@@ -3658,6 +3795,52 @@ function Storefront({ store, cart, wishlist, onBack, onAdd, onChangeQty, onRemov
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+function formatReviewDate(value) {
+  const date = value?.toDate ? value.toDate() : (value ? new Date(value) : null);
+  return date && !Number.isNaN(date.getTime()) ? date.toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" }) : "Abhi";
+}
+
+function ReviewStars({ rating, size = 15 }) {
+  return <span aria-label={`${rating} out of 5 stars`} style={{ color: "#F59E0B", letterSpacing: 1 }}>{[1, 2, 3, 4, 5].map((star) => <span key={star} style={{ fontSize: size }}>{star <= rating ? "★" : "☆"}</span>)}</span>;
+}
+
+function ReviewsModeration({ reviews, onUpdateStatus, onDelete }) {
+  const pending = reviews.filter((review) => review.status === "pending").length;
+  const approved = reviews.filter((review) => review.status === "approved");
+  const average = approved.length ? approved.reduce((sum, review) => sum + Number(review.rating || 0), 0) / approved.length : 0;
+  return (
+    <div>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 10, marginBottom: 18 }}>
+        <div style={{ background: T.paper, border: `1px solid ${T.border}`, borderRadius: 10, padding: 14 }}><div style={{ fontSize: 11, color: T.muted }}>Total Reviews</div><div style={{ fontSize: 22, fontWeight: 800, color: T.ink }}>{reviews.length}</div></div>
+        <div style={{ background: T.paper, border: `1px solid ${T.border}`, borderRadius: 10, padding: 14 }}><div style={{ fontSize: 11, color: T.muted }}>Pending Approval</div><div style={{ fontSize: 22, fontWeight: 800, color: pending ? "#D97706" : T.ink }}>{pending}</div></div>
+        <div style={{ background: T.paper, border: `1px solid ${T.border}`, borderRadius: 10, padding: 14 }}><div style={{ fontSize: 11, color: T.muted }}>Average Rating</div><div style={{ fontSize: 22, fontWeight: 800, color: T.ink }}>{average ? `${average.toFixed(1)} / 5` : "—"}</div></div>
+      </div>
+      <div style={{ background: "#FFF7ED", border: "1px solid #FED7AA", color: "#9A3412", borderRadius: 10, padding: 12, fontSize: 12.5, lineHeight: 1.5, marginBottom: 16 }}>
+        Customer reviews pehle <strong>Pending</strong> rahenge. Approve karne ke baad hi public store par dikhेंगे.
+      </div>
+      {reviews.length === 0 && <div style={{ background: T.cream, border: `1px dashed ${T.border}`, borderRadius: 12, padding: 28, textAlign: "center", color: T.muted }}>Abhi koi review nahi aaya. Customers ke feedback yahan manage honge.</div>}
+      {reviews.map((review) => (
+        <div key={review.id} style={{ background: T.cream, border: `1px solid ${T.border}`, borderRadius: 12, padding: 16, marginBottom: 12 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+            <div>
+              <div style={{ fontWeight: 800, color: T.ink }}>{review.customerName || "Customer"}</div>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 3 }}><ReviewStars rating={Number(review.rating) || 0} /><span style={{ fontSize: 11, color: T.muted }}>{formatReviewDate(review.createdAt)}</span></div>
+            </div>
+            <span style={{ alignSelf: "flex-start", padding: "4px 9px", borderRadius: 20, background: review.status === "approved" ? "#DCFCE7" : review.status === "hidden" ? "#F3F4F6" : "#FEF3C7", color: review.status === "approved" ? "#166534" : review.status === "hidden" ? T.muted : "#92400E", fontSize: 11, fontWeight: 700 }}>{review.status || "pending"}</span>
+          </div>
+          <p style={{ color: T.ink, fontSize: 13.5, lineHeight: 1.55, margin: "12px 0" }}>{review.comment}</p>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            {review.status !== "approved" && <Button variant="mint" onClick={() => onUpdateStatus(review.id, "approved")}>✅ Approve</Button>}
+            {review.status !== "hidden" && <Button variant="ghost" onClick={() => onUpdateStatus(review.id, "hidden")}>Hide</Button>}
+            {review.status === "hidden" && <Button variant="ghost" onClick={() => onUpdateStatus(review.id, "pending")}>Pending</Button>}
+            <Button variant="ghost" onClick={() => onDelete(review.id)}>Delete</Button>
+          </div>
+        </div>
+      ))}
     </div>
   );
 }
