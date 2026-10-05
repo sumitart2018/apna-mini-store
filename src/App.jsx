@@ -6,7 +6,7 @@ import {
   updateStoreProfile, addStoreCategory, removeStoreCategory,
   setStorePlan, setStoreBlocked, setTrialStartedAt,
   createProduct, editProduct, removeProduct,
-  createOrder, setOrderStatus, uploadStoreImage, resetSellerPassword, signInWithGoogle,
+  createOrder, setOrderStatus, setOrderPaymentStatus, uploadStoreImage, resetSellerPassword, signInWithGoogle,
   trackPlatformVisit, trackStoreVisit, watchReviewsForStore, watchApprovedReviews,
   createReview, setReviewStatus, deleteReview
 } from "./firestoreApi";
@@ -58,6 +58,24 @@ const DK = {
 
 
 const uid = () => Math.random().toString(36).slice(2, 10);
+
+function loadRazorpayScript() {
+  if (window.Razorpay) return Promise.resolve(true);
+  return new Promise((resolve) => {
+    const existing = document.querySelector('script[src="https://checkout.razorpay.com/v1/checkout.js"]');
+    if (existing) {
+      existing.addEventListener("load", () => resolve(true), { once: true });
+      existing.addEventListener("error", () => resolve(false), { once: true });
+      return;
+    }
+    const script = document.createElement("script");
+    script.src = "https://checkout.razorpay.com/v1/checkout.js";
+    script.async = true;
+    script.onload = () => resolve(true);
+    script.onerror = () => resolve(false);
+    document.body.appendChild(script);
+  });
+}
 
 function fileToDataUri(file) {
   return new Promise((resolve, reject) => {
@@ -668,6 +686,8 @@ export default function App() {
         freeShippingThreshold: 0,
         shippingFee: 0,
         gstPercent: 0,
+        paymentMethod: "whatsapp",
+        upiId: "",
         categories: [],
         visitorCount: 0,
       });
@@ -807,9 +827,32 @@ export default function App() {
   const checkoutToWhatsApp = async (customer) => {
     if (!activeStore || checkoutInFlight.current) return;
     checkoutInFlight.current = true;
+    let paymentWindowOpen = false;
     try {
+      const paymentMethod = activeStore.paymentMethod || "whatsapp";
+      if (paymentMethod === "upi" && !activeStore.upiId?.trim()) {
+        flash("Seller ne abhi UPI ID set nahi ki hai");
+        return;
+      }
       const lines = cart.map((i) => `• ${i.name}${productVariantLabel(i) ? ` (${productVariantLabel(i)})` : ""} x${i.qty} — ₹${i.price * i.qty}`).join("\n");
       const msg = `Hi ${activeStore.name}! Main order karna chahta hoon:\n\nName: ${customer.name}\nPhone: ${customer.phone}${customer.address ? `\nAddress: ${customer.address}` : ""}\n\n${lines}\n\nSubtotal: ₹${subtotal}\nShipping: ₹${shippingFee}\nGST: ₹${gst}\nTotal: ₹${total}`;
+
+      let razorpayOrder = null;
+      if (paymentMethod === "razorpay") {
+        const response = await fetch("/api/razorpay/create-order", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            amount: Math.round(total * 100),
+            currency: "INR",
+            receipt: `store-${activeStore.id.slice(0, 8)}-${Date.now()}`.slice(0, 40),
+            notes: { storeId: activeStore.id, storeName: activeStore.name },
+          }),
+        });
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok || !data.id) throw new Error(data.error || "Razorpay order create nahi hua");
+        razorpayOrder = data;
+      }
 
       const order = {
         date: new Date().toISOString(),
@@ -817,21 +860,79 @@ export default function App() {
         items: cart.map((i) => ({ productId: i.id, name: i.name, size: i.size, color: i.color, weight: i.weight, variantLabel: productVariantLabel(i), qty: i.qty, price: i.price })),
         subtotal, shippingFee, gst, total,
         status: "New",
+        paymentMethod,
+        paymentStatus: paymentMethod === "razorpay" ? "pending" : "unpaid",
+        ...(razorpayOrder ? { razorpayOrderId: razorpayOrder.id } : {}),
       };
-      await createOrder(activeStore.id, order);
+      const orderId = await createOrder(activeStore.id, order);
 
-      window.open(`https://wa.me/${activeStore.whatsapp}?text=${encodeURIComponent(msg)}`, "_blank");
+      if (paymentMethod === "razorpay") {
+        const loaded = await loadRazorpayScript();
+        if (!loaded) throw new Error("Razorpay checkout load nahi hua");
+        const razorpay = new window.Razorpay({
+          key: razorpayOrder.keyId,
+          amount: razorpayOrder.amount,
+          currency: razorpayOrder.currency || "INR",
+          name: activeStore.name,
+          description: `Order ${orderId}`,
+          order_id: razorpayOrder.id,
+          prefill: { name: customer.name, contact: customer.phone },
+          theme: { color: activeStore.color || T.mint },
+          handler: async (paymentResponse) => {
+            try {
+              const verifyResponse = await fetch("/api/razorpay/verify-payment", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ ...paymentResponse, storeId: activeStore.id, orderId }),
+              });
+              const verifyData = await verifyResponse.json().catch(() => ({}));
+              if (!verifyResponse.ok || !verifyData.verified) throw new Error(verifyData.error || "Payment verification pending");
+              flash("✅ Payment verified — order seller ko bhej diya");
+              window.open(`https://wa.me/${activeStore.whatsapp}?text=${encodeURIComponent(`${msg}\n\nPayment: Razorpay — Paid`)}`, "_blank");
+              setCart([]);
+            } catch (error) {
+              flash("Payment ho gaya ho to order dashboard me Pending dikh raha hoga — seller verify kar sakta hai");
+              console.warn("Razorpay verification failed:", error);
+            } finally {
+              checkoutInFlight.current = false;
+            }
+          },
+          modal: {
+            ondismiss: () => {
+              checkoutInFlight.current = false;
+              flash("Payment cancel/pending hai — seller dashboard me status check karo");
+            },
+          },
+        });
+        razorpay.open();
+        paymentWindowOpen = true;
+        return;
+      }
+
+      const paymentMsg = paymentMethod === "upi"
+        ? `${msg}\n\nPayment: UPI (${activeStore.upiId})\nPayment status: Unpaid — payment karne ke baad screenshot bhejunga.`
+        : `${msg}\n\nPayment: WhatsApp par confirm hoga\nPayment status: Unpaid`;
+      if (paymentMethod === "upi") {
+        const upiLink = `upi://pay?pa=${encodeURIComponent(activeStore.upiId.trim())}&pn=${encodeURIComponent(activeStore.name)}&am=${total.toFixed(2)}&cu=INR&tn=${encodeURIComponent(`Order ${orderId}`)}`;
+        window.open(upiLink, "_blank");
+      }
+      window.open(`https://wa.me/${activeStore.whatsapp}?text=${encodeURIComponent(paymentMsg)}`, "_blank");
       setCart([]);
     } catch (e) {
-      flash(e.code === "inventory/insufficient-stock" ? "Kisi product ka stock abhi kam ho gaya — cart refresh karke dobara try karo" : "Order save nahi hua — internet check karo aur dobara try karo");
+      flash(e.code === "inventory/insufficient-stock" ? "Kisi product ka stock abhi kam ho gaya — cart refresh karke dobara try karo" : (e.message || "Order save nahi hua — internet check karo aur dobara try karo"));
     } finally {
-      checkoutInFlight.current = false;
+      if (!paymentWindowOpen) checkoutInFlight.current = false;
     }
   };
 
   const updateOrderStatus = async (orderId, status) => {
     setSaveState("saving");
     try { await setOrderStatus(session, orderId, status); setSaveState("idle"); } catch (e) { setSaveState("error"); flash("Status update nahi hua"); }
+  };
+
+  const updateOrderPaymentStatus = async (orderId, paymentStatus) => {
+    setSaveState("saving");
+    try { await setOrderPaymentStatus(session, orderId, paymentStatus); setSaveState("idle"); flash("Payment status update ho gaya"); } catch (e) { setSaveState("error"); flash("Payment status update nahi hua"); }
   };
 
   const updateReviewStatus = async (reviewId, status) => {
@@ -931,7 +1032,7 @@ export default function App() {
         <SuperAdminDashboard stores={stores} platformVisitors={platformVisitors} onActivate={activatePlan} onBlock={toggleBlockStore} onExtendTrial={extendTrial} onLogout={() => { signOutUser(); setView("directory"); }} onResetPassword={sendResetEmail} />
       )}
       {view === "dashboard" && ownerStore && (
-        <Dashboard store={ownerStore} onAddProduct={addProduct} onUpdateProduct={updateProduct} onDeleteProduct={deleteProduct} onAddCategory={addCategory} onDeleteCategory={deleteCategory} onUpdateStore={updateOwnerStore} onViewStore={() => openStore(ownerStore.id)} onUpdateOrderStatus={updateOrderStatus} onUpdateReviewStatus={updateReviewStatus} onDeleteReview={removeReview} saveState={saveState} />
+        <Dashboard store={ownerStore} onAddProduct={addProduct} onUpdateProduct={updateProduct} onDeleteProduct={deleteProduct} onAddCategory={addCategory} onDeleteCategory={deleteCategory} onUpdateStore={updateOwnerStore} onViewStore={() => openStore(ownerStore.id)} onUpdateOrderStatus={updateOrderStatus} onUpdateOrderPaymentStatus={updateOrderPaymentStatus} onUpdateReviewStatus={updateReviewStatus} onDeleteReview={removeReview} saveState={saveState} />
       )}
       {view === "storefront" && activeStore && (
         <Storefront store={activeStore} cart={cart} wishlist={wishlist} onBack={() => {
@@ -2013,19 +2114,23 @@ function LoginForm({ onSubmit, onSignup, onGoogleLogin }) {
 }
 
 const STATUS_COLORS = { New: "#FF9F1C", Confirmed: "#3D5A80", Shipped: "#8338EC", Delivered: "#1B9C85", Cancelled: "#E03131" };
+const PAYMENT_STATUS_COLORS = { unpaid: "#6B7280", pending: "#D97706", paid: "#15803D", failed: "#DC2626", refunded: "#7C3AED" };
+const PAYMENT_STATUS_LABELS = { unpaid: "Unpaid", pending: "Pending", paid: "Paid", failed: "Failed", refunded: "Refunded" };
 
-function Dashboard({ store, onAddProduct, onUpdateProduct, onDeleteProduct, onAddCategory, onDeleteCategory, onUpdateStore, onViewStore, onUpdateOrderStatus, onUpdateReviewStatus, onDeleteReview, saveState }) {
+function Dashboard({ store, onAddProduct, onUpdateProduct, onDeleteProduct, onAddCategory, onDeleteCategory, onUpdateStore, onViewStore, onUpdateOrderStatus, onUpdateOrderPaymentStatus, onUpdateReviewStatus, onDeleteReview, saveState }) {
   const [tab, setTab] = useState("products");
   const orders = store.orders || [];
   const reviews = store.reviews || [];
   const [orderFilter, setOrderFilter] = useState("All");
+  const [paymentFilter, setPaymentFilter] = useState("All");
   const [newCat, setNewCat] = useState("");
   const [np, setNp] = useState({ name: "", price: "", mrp: "", category: store.categories[0] || "", inStock: true, trackInventory: true, stockQty: "10", lowStockThreshold: "2", sizes: "", colors: "", weights: "", img: "", description: "", tags: "" });
   const [assistantMessage, setAssistantMessage] = useState("");
   const [assistantStatus, setAssistantStatus] = useState("");
   const [editingId, setEditingId] = useState(null);
   const [npErrors, setNpErrors] = useState({});
-  const [settings, setSettings] = useState({ minOrderValue: store.minOrderValue || 0, freeShippingThreshold: store.freeShippingThreshold || 0, shippingFee: store.shippingFee || 0, gstPercent: store.gstPercent || 0 });
+  const [settings, setSettings] = useState({ minOrderValue: store.minOrderValue || 0, freeShippingThreshold: store.freeShippingThreshold || 0, shippingFee: store.shippingFee || 0, gstPercent: store.gstPercent || 0, paymentMethod: store.paymentMethod || "whatsapp", upiId: store.upiId || "" });
+  const [settingsError, setSettingsError] = useState("");
   const [profile, setProfile] = useState({
     ownerName: store.ownerName || "",
     altPhone: store.altPhone || "",
@@ -2046,11 +2151,13 @@ function Dashboard({ store, onAddProduct, onUpdateProduct, onDeleteProduct, onAd
   const [linkStatus, setLinkStatus] = useState("");
   const storeLink = storeUrl(store);
 
-  const filteredOrders = orderFilter === "All" ? orders : orders.filter((o) => o.status === orderFilter);
+  const filteredOrders = orders.filter((o) => (orderFilter === "All" || o.status === orderFilter) && (paymentFilter === "All" || (o.paymentStatus || "unpaid") === paymentFilter));
   const analytics = {
     revenue: orders.reduce((s, o) => s + (o.total || 0), 0),
     count: orders.length,
     avg: orders.length ? orders.reduce((s, o) => s + (o.total || 0), 0) / orders.length : 0,
+    paidCount: orders.filter((o) => o.paymentStatus === "paid").length,
+    paidRevenue: orders.filter((o) => o.paymentStatus === "paid").reduce((s, o) => s + (o.total || 0), 0),
   };
 
   const resetProductForm = () => {
@@ -2213,15 +2320,24 @@ function Dashboard({ store, onAddProduct, onUpdateProduct, onDeleteProduct, onAd
                 <div style={{ fontSize: 11, opacity: 0.6 }}>Avg Order Value</div>
                 <div style={{ fontSize: 20, fontWeight: 800, color: T.ink }}>₹{analytics.avg.toFixed(0)}</div>
               </div>
+              <div style={{ background: T.paper, border: `1px solid ${T.border}`, borderRadius: 10, padding: "12px" }}>
+                <div style={{ fontSize: 11, opacity: 0.6 }}>Paid Orders</div>
+                <div style={{ fontSize: 20, fontWeight: 800, color: "#15803D" }}>{analytics.paidCount} <span style={{ fontSize: 12, fontWeight: 600 }}>• ₹{analytics.paidRevenue.toFixed(0)}</span></div>
+              </div>
             </div>
           )}
 
           {orders.length > 0 && (
             <div style={{ marginBottom: 16 }}>
               <label htmlFor="order-filter" style={{ position: "absolute", width: 1, height: 1, padding: 0, margin: -1, overflow: "hidden", clip: "rect(0,0,0,0)", whiteSpace: "nowrap", border: 0 }}>Order status filter</label>
-              <select id="order-filter" value={orderFilter} onChange={(e) => setOrderFilter(e.target.value)} style={{ height: 44, minWidth: 160, borderRadius: 8, border: `2px solid ${T.ink}22`, fontFamily: "Inter", fontWeight: 600, fontSize: 13, padding: "0 12px" }}>
+              <select id="order-filter" value={orderFilter} onChange={(e) => setOrderFilter(e.target.value)} style={{ height: 44, minWidth: 160, borderRadius: 8, border: `2px solid ${T.ink}22`, fontFamily: "Inter", fontWeight: 600, fontSize: 13, padding: "0 12px", marginRight: 8 }}>
                 <option value="All">Sab Orders</option>
                 {["New", "Confirmed", "Shipped", "Delivered", "Cancelled"].map((s) => <option key={s} value={s}>{s}</option>)}
+              </select>
+              <label htmlFor="payment-filter" style={{ position: "absolute", width: 1, height: 1, padding: 0, margin: -1, overflow: "hidden", clip: "rect(0,0,0,0)", whiteSpace: "nowrap", border: 0 }}>Payment status filter</label>
+              <select id="payment-filter" value={paymentFilter} onChange={(e) => setPaymentFilter(e.target.value)} style={{ height: 44, minWidth: 150, borderRadius: 8, border: `2px solid ${T.ink}22`, fontFamily: "Inter", fontWeight: 600, fontSize: 13, padding: "0 12px" }}>
+                <option value="All">All Payments</option>
+                {Object.entries(PAYMENT_STATUS_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
               </select>
             </div>
           )}
@@ -2239,6 +2355,10 @@ function Dashboard({ store, onAddProduct, onUpdateProduct, onDeleteProduct, onAd
                 <label htmlFor={`order-status-${o.id}`} style={{ position: "absolute", width: 1, height: 1, padding: 0, margin: -1, overflow: "hidden", clip: "rect(0,0,0,0)", whiteSpace: "nowrap", border: 0 }}>Order status</label>
                 <select id={`order-status-${o.id}`} value={o.status} onChange={(e) => onUpdateOrderStatus(o.id, e.target.value)} style={{ height: 40, minWidth: 120, borderRadius: 6, border: `2px solid ${STATUS_COLORS[o.status] || T.ink}`, color: STATUS_COLORS[o.status] || T.ink, fontFamily: "Inter", fontWeight: 700, fontSize: 13, padding: "0 10px" }}>
                   {["New", "Confirmed", "Shipped", "Delivered", "Cancelled"].map((s) => <option key={s} value={s}>{s}</option>)}
+                </select>
+                <label htmlFor={`order-payment-${o.id}`} style={{ position: "absolute", width: 1, height: 1, padding: 0, margin: -1, overflow: "hidden", clip: "rect(0,0,0,0)", whiteSpace: "nowrap", border: 0 }}>Payment status</label>
+                <select id={`order-payment-${o.id}`} value={o.paymentStatus || "unpaid"} onChange={(e) => onUpdateOrderPaymentStatus(o.id, e.target.value)} style={{ height: 40, minWidth: 112, borderRadius: 6, border: `2px solid ${PAYMENT_STATUS_COLORS[o.paymentStatus || "unpaid"]}`, color: PAYMENT_STATUS_COLORS[o.paymentStatus || "unpaid"], fontFamily: "Inter", fontWeight: 700, fontSize: 13, padding: "0 8px" }}>
+                  {Object.entries(PAYMENT_STATUS_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
                 </select>
               </div>
               <div style={{ marginTop: 10, borderTop: `1px dashed ${T.ink}33`, paddingTop: 10 }}>
@@ -2358,12 +2478,32 @@ function Dashboard({ store, onAddProduct, onUpdateProduct, onDeleteProduct, onAd
 
       {tab === "settings" && (
         <div style={{ background: T.cream, border: `2px solid ${T.ink}22`, borderRadius: 12, padding: 16 }}>
-          <p style={{ fontSize: 13, opacity: 0.6, marginTop: 0 }}>Ye cart mein minimum order, shipping aur GST rules control karte hain — Yuvi Fashion jaisa.</p>
+          <p style={{ fontSize: 13, opacity: 0.6, marginTop: 0 }}>Ye cart mein minimum order, shipping, GST aur online payment rules control karte hain.</p>
           <Field label="Minimum Order Value (₹)" type="number" value={settings.minOrderValue} onChange={(e) => setSettings({ ...settings, minOrderValue: Number(e.target.value) })} />
           <Field label="Free Shipping Threshold (₹) — 0 = disabled" type="number" value={settings.freeShippingThreshold} onChange={(e) => setSettings({ ...settings, freeShippingThreshold: Number(e.target.value) })} />
           <Field label="Shipping Fee (₹, jab free shipping na mile)" type="number" value={settings.shippingFee} onChange={(e) => setSettings({ ...settings, shippingFee: Number(e.target.value) })} />
           <Field label="GST %" type="number" value={settings.gstPercent} onChange={(e) => setSettings({ ...settings, gstPercent: Number(e.target.value) })} />
-          <Button onClick={() => onUpdateStore(settings)}>Settings Save Karo</Button>
+          <div style={{ borderTop: `1px solid ${T.border}`, margin: "20px 0", paddingTop: 18 }}>
+            <div style={{ fontFamily: "Inter", fontWeight: 800, fontSize: 15, color: T.ink, marginBottom: 4 }}>Payment Settings</div>
+            <p style={{ fontSize: 12, color: T.muted, margin: "0 0 12px", lineHeight: 1.5 }}>Customer checkout par payment ka option choose karo. Paid/Unpaid status Orders tab se manage hoga.</p>
+            <label style={{ display: "block", marginBottom: 14 }}>
+              <span style={{ fontFamily: "Inter", fontWeight: 600, fontSize: 13, color: T.ink, opacity: 0.75 }}>Payment Method</span>
+              <select value={settings.paymentMethod} onChange={(e) => { setSettings({ ...settings, paymentMethod: e.target.value }); setSettingsError(""); }} style={{ display: "block", width: "100%", marginTop: 6, minHeight: 44, padding: "10px 12px", borderRadius: 8, border: `2px solid ${T.ink}22`, fontFamily: "Inter", fontSize: 14 }}>
+                <option value="whatsapp">WhatsApp par payment confirm</option>
+                <option value="upi">UPI Manual (UPI ID + screenshot)</option>
+                <option value="razorpay">Razorpay (online payment)</option>
+              </select>
+            </label>
+            {settings.paymentMethod === "upi" && <Field label="UPI ID (e.g. shopname@upi)" placeholder="yourname@upi" value={settings.upiId} onChange={(e) => { setSettings({ ...settings, upiId: e.target.value }); setSettingsError(""); }} />}
+            {settings.paymentMethod === "upi" && <div style={{ background: "#EFF6FF", border: "1px solid #BFDBFE", color: "#1D4ED8", borderRadius: 10, padding: 12, fontSize: 12, lineHeight: 1.5, marginBottom: 14 }}>Customer ke phone mein UPI app khulega. Payment verify karke Orders tab mein status <strong>Paid</strong> kar dena.</div>}
+            {settings.paymentMethod === "razorpay" && <div style={{ background: "#FFF7ED", border: "1px solid #FED7AA", color: "#9A3412", borderRadius: 10, padding: 12, fontSize: 12, lineHeight: 1.5, marginBottom: 14 }}>Razorpay live karne ke liye Razorpay account aur Vercel Environment Variables <strong>RAZORPAY_KEY_ID</strong>, <strong>RAZORPAY_KEY_SECRET</strong>, <strong>FIREBASE_SERVICE_ACCOUNT_JSON</strong> add karne honge.</div>}
+            {settingsError && <div style={{ color: T.red, fontSize: 12, marginBottom: 10 }}>{settingsError}</div>}
+          </div>
+          <Button onClick={() => {
+            if (settings.paymentMethod === "upi" && !settings.upiId.trim()) { setSettingsError("UPI mode ke liye UPI ID zaroori hai"); return; }
+            setSettingsError("");
+            onUpdateStore(settings);
+          }}>Settings Save Karo</Button>
         </div>
       )}
 
@@ -3837,6 +3977,11 @@ function Storefront({ store, cart, wishlist, onBack, onAdd, onChangeQty, onRemov
                 <div style={{ display: "flex", justifyContent: "space-between", fontWeight: 800, fontFamily: "Inter", fontSize: 16, marginBottom: 12 }}>
                   <span>Total Amount</span><span>₹{total.toFixed(2)}</span>
                 </div>
+                <div style={{ background: store.paymentMethod === "razorpay" ? "#F0FDF4" : "#EFF6FF", border: `1px solid ${store.paymentMethod === "razorpay" ? "#BBF7D0" : "#BFDBFE"}`, color: store.paymentMethod === "razorpay" ? "#166534" : "#1D4ED8", borderRadius: 9, padding: 10, fontSize: 12, lineHeight: 1.45, marginBottom: 10 }}>
+                  {store.paymentMethod === "razorpay" && "🔒 Secure Razorpay checkout — payment ke baad order automatically verify hoga."}
+                  {store.paymentMethod === "upi" && `📲 UPI app khulega: ${store.upiId || "UPI ID not set"}. Payment ke baad screenshot WhatsApp par bhejna.`}
+                  {(!store.paymentMethod || store.paymentMethod === "whatsapp") && "💬 Order WhatsApp par confirm hoga. Payment status seller dashboard se manage karega."}
+                </div>
                 <Button variant="mint" style={{ width: "100%" }} disabled={!customer.name.trim() || !customer.phone.trim()} onClick={() => {
                   if (!isValidPhone(customer.phone)) { setFormErrors({ phone: "Sahi 10-digit mobile number daalo" }); return; }
                   setFormErrors({});
@@ -3844,7 +3989,7 @@ function Storefront({ store, cart, wishlist, onBack, onAdd, onChangeQty, onRemov
                   setCheckoutStep(false);
                   setCustomer({ name: "", phone: "", address: "" });
                 }}>
-                  Checkout to WhatsApp →
+                  {store.paymentMethod === "razorpay" ? "Pay Securely with Razorpay →" : store.paymentMethod === "upi" ? "Order + UPI Payment →" : "Checkout to WhatsApp →"}
                 </Button>
               </div>
             )}

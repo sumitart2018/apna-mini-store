@@ -316,9 +316,13 @@ export async function createOrder(storeId, order) {
 
     transaction.set(orderRef, { ...order, storeId, stockAdjustments });
   });
+  return orderRef.id;
 }
 export async function setOrderStatus(uid, orderId, status) {
   await updateDoc(doc(db, "stores", uid, "orders", orderId), { status });
+}
+export async function setOrderPaymentStatus(uid, orderId, paymentStatus) {
+  await updateDoc(doc(db, "stores", uid, "orders", orderId), { paymentStatus });
 }
 
 // ---------- Image upload ----------

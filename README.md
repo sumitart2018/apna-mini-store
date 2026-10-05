@@ -79,6 +79,9 @@ This pushes `firestore.rules` and `storage.rules` — they're written so that:
 - The seller product form includes a no-cost offline **Free AI Assistant**
   that drafts a description, tags, and WhatsApp marketing copy without an
   API key or recurring AI charge.
+- Checkout supports **WhatsApp**, **manual UPI**, and a secure **Razorpay**
+  flow. Orders store payment status (`unpaid`, `pending`, `paid`, `failed`,
+  or `refunded`) and sellers can filter/update it in the dashboard.
 - The public Live Stores directory stays compact with a featured horizontal
   carousel, active-store filtering, search/category/sort controls, responsive
   mobile layout, and incremental **Load More Stores** pagination.
@@ -94,8 +97,13 @@ This pushes `firestore.rules` and `storage.rules` — they're written so that:
 1. Push this project to a GitHub repo.
 2. Go to [vercel.com](https://vercel.com) → **Add New Project** → import the repo.
 3. Framework preset: **Vite** (auto-detected).
-4. Add your `.env` values under **Environment Variables** (same 6 keys as `.env.example`) — Vercel won't read your local `.env` file, you have to add them here too.
-5. Deploy — you'll get a free `yourproject.vercel.app` URL. Add a custom
+4. Add your `.env` values under **Environment Variables** (same 6 Firebase browser keys as `.env.example`) — Vercel won't read your local `.env` file, you have to add them here too.
+5. To enable Razorpay, add these server-only Vercel variables as well:
+   `RAZORPAY_KEY_ID`, `RAZORPAY_KEY_SECRET`, and
+   `FIREBASE_SERVICE_ACCOUNT_JSON`. Never prefix these with `VITE_`, commit
+   them to Git, or expose them in browser code. UPI manual mode only needs a
+   seller's UPI ID in Cart Settings.
+6. Deploy — you'll get a free `yourproject.vercel.app` URL. Add a custom
    domain later under Project Settings → Domains if you want one.
 
 That's the whole path from zero to a live, working, multi-device SaaS

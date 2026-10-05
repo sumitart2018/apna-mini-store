@@ -22,6 +22,7 @@ service cloud.firestore {
             request.resource.data.diff(resource.data).affectedKeys().hasOnly([
               "name", "tagline", "whatsapp", "color", "theme",
               "minOrderValue", "freeShippingThreshold", "shippingFee", "gstPercent",
+              "paymentMethod", "upiId",
               "categories", "ownerName", "altPhone", "address", "gstin", "about",
               "facebook", "instagram", "youtube", "bannerImg", "logoImg",
               "seoTitle", "seoDescription"
@@ -81,17 +82,23 @@ service cloud.firestore {
           && request.resource.data.customer.name.size() <= 120
           && request.resource.data.customer.phone is string
           && request.resource.data.customer.phone.size() >= 10
-          && request.resource.data.customer.phone.size() <= 20
-          && request.resource.data.items is list
-          && request.resource.data.items.size() > 0
-          && request.resource.data.items.size() <= 50
-          && request.resource.data.total is number
-          && request.resource.data.total >= 0;
+           && request.resource.data.customer.phone.size() <= 20
+           && request.resource.data.items is list
+           && request.resource.data.items.size() > 0
+           && request.resource.data.items.size() <= 50
+           && request.resource.data.total is number
+           && request.resource.data.total >= 0
+           && request.resource.data.paymentMethod in ["whatsapp", "upi", "razorpay"]
+           && request.resource.data.paymentStatus in ["unpaid", "pending", "paid", "failed", "refunded"];
         allow read: if request.auth != null && request.auth.uid == storeId;
         allow update: if request.auth != null
           && request.auth.uid == storeId
           && request.resource.data.diff(resource.data).affectedKeys().hasOnly(["status"])
           && request.resource.data.status in ["New", "Confirmed", "Shipped", "Delivered", "Cancelled"];
+        allow update: if request.auth != null
+          && request.auth.uid == storeId
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(["paymentStatus"])
+          && request.resource.data.paymentStatus in ["unpaid", "pending", "paid", "failed", "refunded"];
         allow delete: if false;
       }
 
