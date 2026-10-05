@@ -914,9 +914,15 @@ export default function App() {
         : `${msg}\n\nPayment: WhatsApp par confirm hoga\nPayment status: Unpaid`;
       if (paymentMethod === "upi") {
         const upiLink = `upi://pay?pa=${encodeURIComponent(activeStore.upiId.trim())}&pn=${encodeURIComponent(activeStore.name)}&am=${total.toFixed(2)}&cu=INR&tn=${encodeURIComponent(`Order ${orderId}`)}`;
-        window.open(upiLink, "_blank");
+        const isMobileDevice = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent)
+          || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+        if (isMobileDevice) {
+          window.open(upiLink, "_blank", "noopener,noreferrer");
+        } else {
+          flash("Desktop par UPI app nahi khulta — UPI ID WhatsApp message mein bhej di gayi hai.");
+        }
       }
-      window.open(`https://wa.me/${activeStore.whatsapp}?text=${encodeURIComponent(paymentMsg)}`, "_blank");
+      window.open(`https://wa.me/${activeStore.whatsapp}?text=${encodeURIComponent(paymentMsg)}`, "_blank", "noopener,noreferrer");
       setCart([]);
     } catch (e) {
       flash(e.code === "inventory/insufficient-stock" ? "Kisi product ka stock abhi kam ho gaya — cart refresh karke dobara try karo" : (e.message || "Order save nahi hua — internet check karo aur dobara try karo"));
@@ -3979,7 +3985,7 @@ function Storefront({ store, cart, wishlist, onBack, onAdd, onChangeQty, onRemov
                 </div>
                 <div style={{ background: store.paymentMethod === "razorpay" ? "#F0FDF4" : "#EFF6FF", border: `1px solid ${store.paymentMethod === "razorpay" ? "#BBF7D0" : "#BFDBFE"}`, color: store.paymentMethod === "razorpay" ? "#166534" : "#1D4ED8", borderRadius: 9, padding: 10, fontSize: 12, lineHeight: 1.45, marginBottom: 10 }}>
                   {store.paymentMethod === "razorpay" && "🔒 Secure Razorpay checkout — payment ke baad order automatically verify hoga."}
-                  {store.paymentMethod === "upi" && `📲 UPI app khulega: ${store.upiId || "UPI ID not set"}. Payment ke baad screenshot WhatsApp par bhejna.`}
+                  {store.paymentMethod === "upi" && `📲 Mobile par UPI app khulega: ${store.upiId || "UPI ID not set"}. Desktop par UPI ID WhatsApp mein milegi — payment ke baad screenshot bhejna.`}
                   {(!store.paymentMethod || store.paymentMethod === "whatsapp") && "💬 Order WhatsApp par confirm hoga. Payment status seller dashboard se manage karega."}
                 </div>
                 <Button variant="mint" style={{ width: "100%" }} disabled={!customer.name.trim() || !customer.phone.trim()} onClick={() => {
