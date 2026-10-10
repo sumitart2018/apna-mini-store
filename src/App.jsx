@@ -5057,6 +5057,7 @@ function SuperAdminDashboard({ stores, productsByStore = {}, globalOrders = [], 
                   <span><Phone size={12} style={{ verticalAlign: -1, marginRight: 4 }} />{s.whatsapp}</span>
                   <span><QrCode size={12} style={{ verticalAlign: -1, marginRight: 4 }} />{st.plan ? PLAN_PRICES[st.plan]?.label : "No paid plan"}</span>
                 </div>
+                <div style={{ marginBottom: 14 }}><SellerHealthBadge store={s} storeAnalytics={storeAnalytics[s.id] || {}} /></div>
 
                 {/* Password reset — Super Admin only. Real Firebase Auth never lets
                     anyone read a password back in plain text (that's the whole point
