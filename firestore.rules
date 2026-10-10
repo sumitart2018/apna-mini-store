@@ -2,6 +2,11 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
+    function isSuperAdmin() {
+      return request.auth != null
+        && request.auth.token.email == "sumitart2018@gmail.com";
+    }
+
     match /stores/{storeId} {
       // Anyone can read store profiles — needed for the public directory
       // and public storefronts (customers aren't logged in).
@@ -16,7 +21,7 @@ service cloud.firestore {
         && request.resource.data.ownerId == request.auth.uid;
       allow update: if request.auth != null &&
         (
-          request.auth.token.email == "sumitart2018@gmail.com" ||
+          isSuperAdmin() ||
           (
             request.auth.uid == storeId &&
             request.resource.data.diff(resource.data).affectedKeys().hasOnly([
@@ -39,6 +44,14 @@ service cloud.firestore {
             || (resource.data.keys().hasAny(["visitorCount"]) && request.resource.data.visitorCount == resource.data.visitorCount + 1)
           )
         );
+      // Sellers can submit a payment reference, but can never mark it
+      // approved themselves. Approval is a Super Admin-only update.
+      allow update: if request.auth != null
+        && request.auth.uid == storeId
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          "paymentUtr", "paymentNote", "paymentPlan", "paymentProofStatus", "paymentSubmittedAt"
+        ])
+        && request.resource.data.paymentProofStatus == "pending";
       allow delete: if false;
 
       match /products/{productId} {
@@ -168,6 +181,31 @@ service cloud.firestore {
     // owning store may read its own orders through the nested rule above.
     match /{path=**}/products/{productId} {
       allow read: if true;
+    }
+
+    // Only the Super Admin can run platform-wide order analytics. Sellers
+    // continue to read orders through their own nested rule above.
+    match /{path=**}/orders/{orderId} {
+      allow read: if isSuperAdmin();
+    }
+
+    // Only the Super Admin can aggregate each store's engagement summary.
+    match /{path=**}/analytics/{analyticsId} {
+      allow read: if isSuperAdmin();
+    }
+
+    // Immutable administrative history. It records actions, never passwords
+    // or payment secrets.
+    match /auditLogs/{logId} {
+      allow read: if isSuperAdmin();
+      allow create: if isSuperAdmin()
+        && request.resource.data.adminEmail == request.auth.token.email
+        && request.resource.data.action is string
+        && request.resource.data.action.size() > 0
+        && request.resource.data.action.size() <= 120
+        && request.resource.data.storeId is string
+        && request.resource.data.details is map;
+      allow update, delete: if false;
     }
 
     // One public, append-by-one counter for visits to the main SaaS homepage.

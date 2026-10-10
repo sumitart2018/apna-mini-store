@@ -38,6 +38,7 @@ import {
   serverTimestamp,
   query,
   orderBy as fsOrderBy,
+  limit as fsLimit,
   where as fsWhere,
   runTransaction,
   writeBatch,
@@ -138,6 +139,29 @@ export async function setStoreBlocked(uid, blocked) {
 export async function setTrialStartedAt(uid, trialStartedAt) {
   await updateDoc(doc(db, "stores", uid), { trialStartedAt });
 }
+export async function setStoreApproval(uid, approvalStatus, note = "") {
+  await updateDoc(doc(db, "stores", uid), {
+    approvalStatus,
+    approvalNote: note,
+    approvalUpdatedAt: serverTimestamp(),
+  });
+}
+export async function setPaymentVerification(uid, paymentProofStatus, note = "") {
+  await updateDoc(doc(db, "stores", uid), {
+    paymentProofStatus,
+    paymentVerificationNote: note,
+    paymentVerifiedAt: serverTimestamp(),
+  });
+}
+export async function writeAdminAuditLog(action, adminEmail, storeId = "", details = {}) {
+  await addDoc(collection(db, "auditLogs"), {
+    action,
+    adminEmail,
+    storeId,
+    details,
+    createdAt: serverTimestamp(),
+  });
+}
 
 // ---------- Real-time listeners ----------
 // Each returns an unsubscribe function — call it in a useEffect cleanup.
@@ -184,6 +208,44 @@ export function watchOrdersForStore(storeId, onChange, onError) {
       onChange(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
     },
     (err) => { console.error("watchOrdersForStore failed:", err); if (onError) onError(err); }
+  );
+}
+
+// Super Admin-only collection-group listener used by the platform analytics
+// view. Firestore rules restrict this query to the configured admin account.
+export function watchAllOrders(onChange, onError) {
+  return onSnapshot(
+    collectionGroup(db, "orders"),
+    (snap) => onChange(snap.docs.map((d) => ({ id: d.id, ...d.data() }))),
+    (err) => { console.error("watchAllOrders failed:", err); if (onError) onError(err); }
+  );
+}
+
+// Each store's public engagement summary lives at stores/{uid}/analytics/
+// summary. The Super Admin sees these summaries through a collection-group
+// query, while sellers continue to see only their own summary.
+export function watchAllStoreAnalytics(onChange, onError) {
+  return onSnapshot(
+    collectionGroup(db, "analytics"),
+    (snap) => {
+      const byStore = {};
+      snap.docs.forEach((d) => {
+        if (d.id !== "summary") return;
+        const storeRef = d.ref.parent.parent;
+        if (!storeRef) return;
+        byStore[storeRef.id] = d.data();
+      });
+      onChange(byStore);
+    },
+    (err) => { console.error("watchAllStoreAnalytics failed:", err); if (onError) onError(err); }
+  );
+}
+
+export function watchAdminAuditLogs(onChange, onError) {
+  return onSnapshot(
+    query(collection(db, "auditLogs"), fsOrderBy("createdAt", "desc"), fsLimit(100)),
+    (snap) => onChange(snap.docs.map((d) => ({ id: d.id, ...d.data() }))),
+    (err) => { console.error("watchAdminAuditLogs failed:", err); if (onError) onError(err); }
   );
 }
 

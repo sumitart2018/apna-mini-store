@@ -1,10 +1,10 @@
 import React, { useState, useEffect, useCallback, useRef, useMemo } from "react";
-import { ShoppingCart, MessageCircle, Palette, Package, QrCode, BarChart3, ShieldCheck, Smartphone, Users, Boxes, Search, Zap, Menu, X, Facebook, Instagram, Youtube, Heart, Truck, Headphones, User, Phone, MapPin, FileText, Mail, Twitter, ShoppingBag, Shirt, Coffee, KeyRound, Grid3x3, Share2, SlidersHorizontal, Home, Award, Star, ExternalLink, Globe, UtensilsCrossed, Moon, Sun, Sparkles, TrendingUp, Flame, Bell, LogOut, Filter, ArrowUpDown, ChevronLeft, ChevronRight, Store, Ban, CalendarDays, Clock, Hash, TrendingDown, Copy, Lock, Eye, EyeOff, Loader2 } from "lucide-react";
+import { ShoppingCart, MessageCircle, Palette, Package, QrCode, BarChart3, ShieldCheck, Smartphone, Users, Boxes, Search, Zap, Menu, X, Facebook, Instagram, Youtube, Heart, Truck, Headphones, User, Phone, MapPin, FileText, Mail, Twitter, ShoppingBag, Shirt, Coffee, KeyRound, Grid3x3, Share2, SlidersHorizontal, Home, Award, Star, ExternalLink, Globe, UtensilsCrossed, Moon, Sun, Sparkles, TrendingUp, Flame, Bell, LogOut, Filter, ArrowUpDown, ChevronLeft, ChevronRight, Store, Ban, CalendarDays, Clock, Hash, TrendingDown, Copy, Lock, Eye, EyeOff, Loader2, Download, CheckCircle2, ClipboardList, Receipt, Activity } from "lucide-react";
 import {
-  watchAllStores, watchAllProducts, watchOrdersForStore, watchPlatformAnalytics, watchStoreAnalytics, watchAuthState,
+  watchAllStores, watchAllProducts, watchOrdersForStore, watchAllOrders, watchAllStoreAnalytics, watchAdminAuditLogs, watchPlatformAnalytics, watchStoreAnalytics, watchAuthState,
   signUpSeller, signInSeller, signOutUser, friendlyAuthError,
   updateStoreProfile, addStoreCategory, removeStoreCategory,
-  setStorePlan, setStoreBlocked, setTrialStartedAt,
+  setStorePlan, setStoreBlocked, setTrialStartedAt, setStoreApproval, setPaymentVerification, writeAdminAuditLog,
   createProduct, editProduct, removeProduct,
   createOrder, setOrderStatus, setOrderPaymentStatus, uploadStoreImage, resetSellerPassword, signInWithGoogle,
   trackPlatformVisit, trackStoreVisit, trackStoreAnalytics, watchReviewsForStore, watchApprovedReviews,
@@ -188,11 +188,47 @@ function getStoreStatus(store) {
   return { status: "expired", daysLeft: 0 };
 }
 
+function getStoreApprovalStatus(store) {
+  // Existing stores were created before approval workflow was introduced;
+  // treating a missing field as approved keeps current live stores working.
+  return store?.approvalStatus || "approved";
+}
+
 function storeDateValue(value) {
   if (value && typeof value.toMillis === "function") return value.toMillis();
   if (value && typeof value.toDate === "function") return value.toDate().getTime();
   const parsed = value ? new Date(value).getTime() : 0;
   return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function csvCell(value) {
+  const text = value === null || value === undefined ? "" : String(value);
+  return `"${text.replace(/"/g, '""')}"`;
+}
+
+function downloadCsv(filename, rows) {
+  if (!rows.length) return false;
+  const headers = [...new Set(rows.flatMap((row) => Object.keys(row)))];
+  const csv = [headers, ...rows.map((row) => headers.map((header) => row[header]))]
+    .map((row) => row.map(csvCell).join(","))
+    .join("\n");
+  const blob = new Blob(["\uFEFF" + csv], { type: "text/csv;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = filename;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+  return true;
+}
+
+function formatAdminDate(value) {
+  const date = value?.toDate ? value.toDate() : (value ? new Date(value) : null);
+  return date && !Number.isNaN(date.getTime())
+    ? date.toLocaleString("en-IN", { dateStyle: "medium", timeStyle: "short" })
+    : "—";
 }
 
 function slugify(s) {
@@ -502,6 +538,9 @@ export default function App() {
   const [productsByStore, setProductsByStore] = useState({});
   const [ordersByStore, setOrdersByStore] = useState({});
   const [analyticsByStore, setAnalyticsByStore] = useState({});
+  const [adminOrders, setAdminOrders] = useState([]);
+  const [adminAnalyticsByStore, setAdminAnalyticsByStore] = useState({});
+  const [adminAuditLogs, setAdminAuditLogs] = useState([]);
   const [reviewsByStore, setReviewsByStore] = useState({});
   const [platformVisitors, setPlatformVisitors] = useState(0);
   // undefined = auth state not yet resolved, null = logged out, object = logged in
@@ -561,7 +600,7 @@ export default function App() {
   useEffect(() => {
     if (view !== "storefront" || !activeStoreId) return;
     const store = stores.find((item) => item.id === activeStoreId || item.slug === activeStoreId);
-    if (!store || !["active", "trial"].includes(getStoreStatus(store).status)) return;
+    if (!store || getStoreApprovalStatus(store) !== "approved" || !["active", "trial"].includes(getStoreStatus(store).status)) return;
     const storeId = store.id;
     const key = `apna-mini-store:visited:store:${storeId}`;
     try {
@@ -581,11 +620,20 @@ export default function App() {
 
   useEffect(() => {
     if (authUser === undefined) return;
-    if (!authUser || isSuperAdmin) {
+    if (!authUser) {
       setOrdersByStore({});
       setAnalyticsByStore({});
       setReviewsByStore({});
+      setAdminOrders([]);
+      setAdminAnalyticsByStore({});
+      setAdminAuditLogs([]);
       return;
+    }
+    if (isSuperAdmin) {
+      const unsubAdminOrders = watchAllOrders(setAdminOrders, (err) => console.warn("Global orders load nahi hue:", err));
+      const unsubAdminAnalytics = watchAllStoreAnalytics(setAdminAnalyticsByStore, (err) => console.warn("Global analytics load nahi hua:", err));
+      const unsubAuditLogs = watchAdminAuditLogs(setAdminAuditLogs, (err) => console.warn("Audit logs load nahi hue:", err));
+      return () => { unsubAdminOrders(); unsubAdminAnalytics(); unsubAuditLogs(); };
     }
     const unsubOrders = watchOrdersForStore(authUser.uid, (orders) => {
       setOrdersByStore({ [authUser.uid]: orders });
@@ -625,6 +673,11 @@ export default function App() {
 
       const store = stores.find((s) => s.id === key || s.slug === key);
       if (!store) return;
+      if (getStoreApprovalStatus(store) !== "approved") {
+        setActiveStoreId(null);
+        setView("directory");
+        return;
+      }
 
       setActiveStoreId(store.id);
       setView("storefront");
@@ -695,6 +748,8 @@ export default function App() {
         plan: null,
         planExpiresAt: null,
         blocked: false,
+        approvalStatus: "pending",
+        approvalNote: "Admin approval pending",
         minOrderValue: 0,
         freeShippingThreshold: 0,
         shippingFee: 0,
@@ -790,7 +845,11 @@ export default function App() {
  const openStore = (id) => {
    const store = stores.find((s) => s.id === id);
 
-  if (!store) return;
+   if (!store) return;
+   if (getStoreApprovalStatus(store) !== "approved") {
+     flash("Ye store abhi admin approval ka wait kar raha hai");
+     return;
+   }
 
    window.history.pushState({ storeId: store.id }, "", storePath(store));
 
@@ -972,6 +1031,7 @@ export default function App() {
     const info = PLAN_PRICES[planType];
     try {
       await setStorePlan(storeId, planType, new Date(Date.now() + info.days * 86400000).toISOString());
+      recordAdminAction("plan_activated", storeId, { planType, price: info.price, days: info.days });
       flash(`${info.label} plan activate ho gaya`);
     } catch (e) {
       flash("Activate nahi hua — dobara try karo");
@@ -979,15 +1039,53 @@ export default function App() {
   };
   const toggleBlockStore = async (storeId) => {
     const s = stores.find((s) => s.id === storeId);
-    try { await setStoreBlocked(storeId, !s.blocked); } catch (e) { flash("Update nahi hua"); }
+    try {
+      await setStoreBlocked(storeId, !s.blocked);
+      recordAdminAction(s.blocked ? "store_unblocked" : "store_blocked", storeId);
+    } catch (e) { flash("Update nahi hua"); }
   };
   const extendTrial = async (storeId, extraDays) => {
     const s = stores.find((s) => s.id === storeId);
     try {
       await setTrialStartedAt(storeId, new Date(new Date(s.trialStartedAt).getTime() + extraDays * 86400000).toISOString());
+      recordAdminAction("trial_extended", storeId, { extraDays });
       flash(`Trial ${extraDays} din badha diya`);
     } catch (e) {
       flash("Update nahi hua");
+    }
+  };
+  const recordAdminAction = (action, storeId = "", details = {}) => {
+    if (!isSuperAdmin) return;
+    writeAdminAuditLog(action, authUser.email, storeId, details).catch((error) => console.warn("Audit log save nahi hua:", error));
+  };
+  const updateStoreApproval = async (storeId, approvalStatus, note = "") => {
+    try {
+      await setStoreApproval(storeId, approvalStatus, note);
+      recordAdminAction(`store_${approvalStatus}`, storeId, { note });
+      flash(approvalStatus === "approved" ? "Store approve ho gaya" : "Store reject ho gaya");
+    } catch (e) {
+      flash("Store approval update nahi hua");
+    }
+  };
+  const updatePaymentVerification = async (storeId, paymentProofStatus, note = "") => {
+    try {
+      await setPaymentVerification(storeId, paymentProofStatus, note);
+      recordAdminAction(`payment_${paymentProofStatus}`, storeId, { note });
+      flash(paymentProofStatus === "approved" ? "Payment verify ho gaya" : "Payment reject ho gaya");
+    } catch (e) {
+      flash("Payment verification update nahi hua");
+    }
+  };
+  const submitPaymentProof = async (payload) => {
+    try {
+      await updateStoreProfile(session, {
+        ...payload,
+        paymentProofStatus: "pending",
+        paymentSubmittedAt: new Date().toISOString(),
+      });
+      flash("Payment verification request submit ho gayi");
+    } catch (e) {
+      flash("Payment request submit nahi hui — dobara try karo");
     }
   };
   // Same real Firebase sign-in as sellers use — the Super Admin just needs a
@@ -1009,6 +1107,7 @@ export default function App() {
   const sendResetEmail = async (email) => {
     try {
       await resetSellerPassword(email);
+      recordAdminAction("password_reset_email_sent", "", { email });
       flash(`✅ Password reset email bhej diya: ${email}`);
     } catch (e) {
       flash(friendlyAuthError(e));
@@ -1049,10 +1148,10 @@ export default function App() {
 )}
       {view === "superadmin-login" && <SuperAdminLogin onSubmit={superAdminLogin} onBack={() => setView("directory")} />}
       {view === "superadmin" && isSuperAdmin && (
-        <SuperAdminDashboard stores={stores} platformVisitors={platformVisitors} onActivate={activatePlan} onBlock={toggleBlockStore} onExtendTrial={extendTrial} onLogout={() => { signOutUser(); setView("directory"); }} onResetPassword={sendResetEmail} />
+        <SuperAdminDashboard stores={stores} productsByStore={productsByStore} globalOrders={adminOrders} storeAnalytics={adminAnalyticsByStore} auditLogs={adminAuditLogs} platformVisitors={platformVisitors} onActivate={activatePlan} onBlock={toggleBlockStore} onExtendTrial={extendTrial} onApprove={updateStoreApproval} onVerifyPayment={updatePaymentVerification} onLogout={() => { signOutUser(); setView("directory"); }} onResetPassword={sendResetEmail} />
       )}
       {view === "dashboard" && ownerStore && (
-        <Dashboard store={ownerStore} storeAnalytics={analyticsByStore[ownerStore.id] || {}} onAddProduct={addProduct} onUpdateProduct={updateProduct} onDeleteProduct={deleteProduct} onAddCategory={addCategory} onDeleteCategory={deleteCategory} onUpdateStore={updateOwnerStore} onViewStore={() => openStore(ownerStore.id)} onUpdateOrderStatus={updateOrderStatus} onUpdateOrderPaymentStatus={updateOrderPaymentStatus} onUpdateReviewStatus={updateReviewStatus} onDeleteReview={removeReview} saveState={saveState} />
+        <Dashboard store={ownerStore} storeAnalytics={analyticsByStore[ownerStore.id] || {}} onAddProduct={addProduct} onUpdateProduct={updateProduct} onDeleteProduct={deleteProduct} onAddCategory={addCategory} onDeleteCategory={deleteCategory} onUpdateStore={updateOwnerStore} onSubmitPayment={submitPaymentProof} onViewStore={() => openStore(ownerStore.id)} onUpdateOrderStatus={updateOrderStatus} onUpdateOrderPaymentStatus={updateOrderPaymentStatus} onUpdateReviewStatus={updateReviewStatus} onDeleteReview={removeReview} saveState={saveState} />
       )}
       {view === "storefront" && activeStore && (
         <Storefront store={activeStore} cart={cart} wishlist={wishlist} onBack={() => {
@@ -1189,7 +1288,7 @@ function Directory({ stores, platformVisitors, onOpen, onCreate, onLogin, onSupe
   ];
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const publicStores = useMemo(
-    () => stores.map((store) => ({ ...store, _status: getStoreStatus(store) })).filter((store) => store._status.status === "active" || store._status.status === "trial"),
+    () => stores.map((store) => ({ ...store, _status: getStoreStatus(store) })).filter((store) => getStoreApprovalStatus(store) === "approved" && (store._status.status === "active" || store._status.status === "trial")),
     [stores]
   );
   const storeCategories = useMemo(
@@ -2267,7 +2366,7 @@ function AdvancedAnalyticsPanel({ metrics }) {
   );
 }
 
-function Dashboard({ store, storeAnalytics = {}, onAddProduct, onUpdateProduct, onDeleteProduct, onAddCategory, onDeleteCategory, onUpdateStore, onViewStore, onUpdateOrderStatus, onUpdateOrderPaymentStatus, onUpdateReviewStatus, onDeleteReview, saveState }) {
+function Dashboard({ store, storeAnalytics = {}, onAddProduct, onUpdateProduct, onDeleteProduct, onAddCategory, onDeleteCategory, onUpdateStore, onSubmitPayment, onViewStore, onUpdateOrderStatus, onUpdateOrderPaymentStatus, onUpdateReviewStatus, onDeleteReview, saveState }) {
   const [tab, setTab] = useState("products");
   const orders = store.orders || [];
   const reviews = store.reviews || [];
@@ -2635,7 +2734,7 @@ function Dashboard({ store, storeAnalytics = {}, onAddProduct, onUpdateProduct, 
       )}
 
       {tab === "billing" && (
-        <BillingPanel store={store} />
+        <BillingPanel store={store} onSubmitPayment={onSubmitPayment} />
       )}
 
       {tab === "settings" && (
@@ -4228,10 +4327,21 @@ function ReviewsModeration({ reviews, onUpdateStatus, onDelete }) {
   );
 }
 
-function BillingPanel({ store }) {
+function BillingPanel({ store, onSubmitPayment }) {
   const st = getStoreStatus(store);
+  const [paymentUtr, setPaymentUtr] = useState(store.paymentUtr || "");
+  const [paymentPlan, setPaymentPlan] = useState(store.paymentPlan || "monthly");
+  const [paymentNote, setPaymentNote] = useState(store.paymentNote || "");
+  const [paymentSubmitting, setPaymentSubmitting] = useState(false);
+
+  const submitPayment = async () => {
+    if (!paymentUtr.trim() || paymentSubmitting) return;
+    setPaymentSubmitting(true);
+    try { await onSubmitPayment({ paymentUtr: paymentUtr.trim(), paymentPlan, paymentNote: paymentNote.trim() }); }
+    finally { setPaymentSubmitting(false); }
+  };
   return (
-    <div style={{ maxWidth: 460 }}>
+    <div style={{ maxWidth: 560 }}>
       <div style={{
         background: st.status === "active" ? "#E6FCF5" : st.status === "trial" ? "#FFF4E0" : "#FFE3E3",
         border: `2px solid ${st.status === "active" ? T.mint : st.status === "trial" ? T.marigold : T.red}`,
@@ -4250,6 +4360,12 @@ function BillingPanel({ store }) {
         {(st.status === "expired" || st.status === "blocked") && (
           <div style={{ fontFamily: "Inter", fontWeight: 700, color: T.red }}>
             🛑 Store abhi inactive hai — customers ko store nahi dikhega jab tak plan activate na ho
+          </div>
+        )}
+        {store.paymentProofStatus && (
+          <div role="status" style={{ marginTop: 12, background: store.paymentProofStatus === "approved" ? "#DCFCE7" : store.paymentProofStatus === "rejected" ? "#FEE2E2" : "#FEF3C7", color: store.paymentProofStatus === "approved" ? "#166534" : store.paymentProofStatus === "rejected" ? "#991B1B" : "#92400E", borderRadius: 9, padding: 10, fontSize: 12, fontWeight: 700 }}>
+            Payment verification: {store.paymentProofStatus === "pending" ? "Admin review pending" : store.paymentProofStatus}
+            {store.paymentVerificationNote ? ` — ${store.paymentVerificationNote}` : ""}
           </div>
         )}
       </div>
@@ -4278,7 +4394,24 @@ function BillingPanel({ store }) {
             <div style={{ fontSize: 11, opacity: 0.6 }}>Premium — 1 Year</div>
           </div>
         </div>
-        <Button variant="mint" style={{ width: "100%" }} onClick={() => window.open("https://wa.me/918866767269?text=" + encodeURIComponent(`Payment kar diya hai ${store.name} store ke liye, please activate karo.`), "_blank")}>
+        <div style={{ borderTop: `1px solid ${T.border}`, paddingTop: 16, marginTop: 4, textAlign: "left" }}>
+          <div style={{ fontWeight: 800, color: T.ink, fontSize: 14, marginBottom: 5 }}>Payment Verification Request</div>
+          <div style={{ color: T.muted, fontSize: 12, lineHeight: 1.45, marginBottom: 12 }}>UPI payment ke baad UTR/transaction ID submit karo. Screenshot WhatsApp par bhejna optional hai.</div>
+          <label style={{ display: "block", fontSize: 12, fontWeight: 700, color: T.ink, marginBottom: 5 }}>Plan</label>
+          <select value={paymentPlan} onChange={(e) => setPaymentPlan(e.target.value)} style={{ width: "100%", minHeight: 40, border: `1px solid ${T.border}`, borderRadius: 8, padding: "0 10px", marginBottom: 10, fontFamily: "Inter" }}>
+            <option value="monthly">Starter — 1 Month (₹500)</option>
+            <option value="quarterly">Business — 3 Months (₹1350)</option>
+            <option value="yearly">Premium — 1 Year (₹3000)</option>
+          </select>
+          <label style={{ display: "block", fontSize: 12, fontWeight: 700, color: T.ink, marginBottom: 5 }}>UTR / Transaction ID</label>
+          <input value={paymentUtr} onChange={(e) => setPaymentUtr(e.target.value)} placeholder="Example: 123456789012" maxLength={80} style={{ width: "100%", minHeight: 40, border: `1px solid ${T.border}`, borderRadius: 8, padding: "0 10px", marginBottom: 10, fontFamily: "Inter", boxSizing: "border-box" }} />
+          <label style={{ display: "block", fontSize: 12, fontWeight: 700, color: T.ink, marginBottom: 5 }}>Note (optional)</label>
+          <textarea value={paymentNote} onChange={(e) => setPaymentNote(e.target.value)} maxLength={300} rows={3} placeholder="Payment date ya extra detail" style={{ width: "100%", border: `1px solid ${T.border}`, borderRadius: 8, padding: 10, marginBottom: 10, fontFamily: "Inter", resize: "vertical", boxSizing: "border-box" }} />
+          <Button variant="primary" style={{ width: "100%" }} disabled={!paymentUtr.trim() || paymentSubmitting} onClick={submitPayment}>
+            {paymentSubmitting ? "Submit ho raha hai..." : "Payment Verification Submit Karo"}
+          </Button>
+        </div>
+        <Button variant="mint" style={{ width: "100%", marginTop: 10 }} onClick={() => window.open("https://wa.me/918866767269?text=" + encodeURIComponent(`Payment kar diya hai ${store.name} store ke liye, please activate karo.`), "_blank")}>
           Payment Screenshot Bhejo →
         </Button>
       </div>
@@ -4361,7 +4494,80 @@ function AdminProgressBar({ status, daysLeft, totalDays }) {
   );
 }
 
-function SuperAdminDashboard({ stores, platformVisitors, onActivate, onBlock, onExtendTrial, onLogout, onResetPassword }) {
+function AdminTabButton({ active, label, count, onClick }) {
+  return (
+    <button type="button" role="tab" aria-selected={active} onClick={onClick} style={{ minHeight: 40, padding: "9px 14px", borderRadius: 10, border: `1px solid ${active ? T.ink : T.border}`, background: active ? T.ink : "#fff", color: active ? "#fff" : T.ink, fontSize: 12.5, fontWeight: 800, cursor: "pointer", whiteSpace: "nowrap" }}>
+      {label}{count ? ` (${count})` : ""}
+    </button>
+  );
+}
+
+function AdminAnalyticsPanel({ metrics, topStores, onExportStores, onExportOrders }) {
+  const cards = [
+    { label: "Store views", value: metrics.views, icon: "👁️", tint: T.mint },
+    { label: "Product views", value: metrics.productViews, icon: "📦", tint: "#2563EB" },
+    { label: "Add to cart", value: metrics.addToCart, icon: "🛒", tint: T.marigold },
+    { label: "Orders", value: metrics.orders, icon: "🧾", tint: T.magenta },
+    { label: "Revenue", value: `₹${metrics.revenue.toLocaleString("en-IN", { maximumFractionDigits: 0 })}`, icon: "💰", tint: "#15803D" },
+    { label: "Conversion rate", value: `${metrics.conversionRate.toFixed(2)}%`, icon: "📈", tint: "#7C3AED" },
+  ];
+  return (
+    <section aria-labelledby="platform-analytics-title" style={{ background: T.cream, border: `1px solid ${T.border}`, borderRadius: 14, padding: 18 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, flexWrap: "wrap", marginBottom: 16 }}>
+        <div><h2 id="platform-analytics-title" style={{ margin: 0, fontFamily: "Inter", fontSize: 19, color: T.ink }}>📊 Global Analytics</h2><p style={{ margin: "4px 0 0", color: T.muted, fontSize: 12 }}>Sabhi stores ka live platform overview.</p></div>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          <button type="button" onClick={onExportStores} style={{ minHeight: 38, border: `1px solid ${T.border}`, background: "#fff", borderRadius: 9, padding: "0 12px", color: T.ink, fontWeight: 700, cursor: "pointer" }}><Download size={14} style={{ verticalAlign: -2, marginRight: 5 }} />Stores CSV</button>
+          <button type="button" onClick={onExportOrders} style={{ minHeight: 38, border: `1px solid ${T.border}`, background: "#fff", borderRadius: 9, padding: "0 12px", color: T.ink, fontWeight: 700, cursor: "pointer" }}><Receipt size={14} style={{ verticalAlign: -2, marginRight: 5 }} />Orders CSV</button>
+        </div>
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(145px, 1fr))", gap: 10 }}>
+        {cards.map((card) => <div key={card.label} style={{ background: T.paper, border: `1px solid ${T.border}`, borderRadius: 10, padding: "13px 14px" }}><div style={{ color: T.muted, fontSize: 11, fontWeight: 700 }}><span aria-hidden="true">{card.icon}</span> {card.label}</div><div style={{ color: card.tint, fontSize: 22, fontWeight: 800, marginTop: 7 }}>{typeof card.value === "number" ? card.value.toLocaleString("en-IN") : card.value}</div></div>)}
+      </div>
+      <div style={{ marginTop: 22, borderTop: `1px solid ${T.border}`, paddingTop: 14 }}>
+        <div style={{ fontWeight: 800, color: T.ink, fontSize: 14, marginBottom: 10 }}>Top stores by revenue</div>
+        {topStores.length === 0 ? <div style={{ color: T.muted, fontSize: 12, padding: 18, background: T.paper, borderRadius: 10 }}>Order data aate hi ranking yahan dikhegi.</div> : topStores.map((store, index) => <div key={store.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, padding: "10px 12px", background: T.paper, border: `1px solid ${T.border}`, borderRadius: 9, marginBottom: 7 }}><div style={{ display: "flex", alignItems: "center", gap: 9, minWidth: 0 }}><strong style={{ color: T.muted, fontSize: 12 }}>#{index + 1}</strong><span style={{ color: T.ink, fontWeight: 700, fontSize: 13, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{store.name}</span></div><strong style={{ color: "#15803D", fontSize: 13 }}>₹{store.revenue.toLocaleString("en-IN", { maximumFractionDigits: 0 })}</strong></div>)}
+      </div>
+      <div role="note" style={{ marginTop: 12, color: T.muted, background: `${T.mint}0C`, borderRadius: 8, padding: 10, fontSize: 11.5, lineHeight: 1.45 }}>Revenue cancelled orders ko exclude karta hai. Customer identity ya password analytics mein store nahi kiya jaata.</div>
+    </section>
+  );
+}
+
+function StoreApprovalPanel({ stores, onApprove }) {
+  const pending = stores.filter((store) => getStoreApprovalStatus(store) === "pending");
+  const rejected = stores.filter((store) => getStoreApprovalStatus(store) === "rejected");
+  const cards = [...pending, ...rejected];
+  return (
+    <section aria-labelledby="store-approval-title" style={{ background: T.cream, border: `1px solid ${T.border}`, borderRadius: 14, padding: 18 }}>
+      <h2 id="store-approval-title" style={{ margin: 0, fontFamily: "Inter", fontSize: 19, color: T.ink }}>✅ Store Approval</h2>
+      <p style={{ color: T.muted, fontSize: 12, margin: "4px 0 16px" }}>Pending stores approve hone ke baad hi public Live Stores directory mein dikhenge.</p>
+      {cards.length === 0 ? <div style={{ background: T.paper, border: `1px dashed ${T.border}`, borderRadius: 10, padding: 30, textAlign: "center", color: T.muted, fontSize: 13 }}>Koi pending approval nahi hai.</div> : cards.map((store) => <div key={store.id} style={{ background: T.paper, border: `1px solid ${T.border}`, borderRadius: 11, padding: 14, marginBottom: 10 }}><div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}><div><strong style={{ color: T.ink }}>{store.name}</strong><div style={{ color: T.muted, fontSize: 12, marginTop: 4 }}>{store.email} · {store.whatsapp}</div><div style={{ color: T.muted, fontSize: 11, marginTop: 4 }}>Created: {formatAdminDate(store.createdAt || store.trialStartedAt)}</div></div><span style={{ alignSelf: "flex-start", color: getStoreApprovalStatus(store) === "rejected" ? "#991B1B" : "#92400E", background: getStoreApprovalStatus(store) === "rejected" ? "#FEE2E2" : "#FEF3C7", borderRadius: 20, padding: "5px 9px", fontSize: 11, fontWeight: 800 }}>{getStoreApprovalStatus(store)}</span></div><div style={{ display: "flex", gap: 8, marginTop: 12, flexWrap: "wrap" }}><button type="button" onClick={() => onApprove(store.id, "approved", "Approved by Super Admin")} style={{ minHeight: 38, border: "none", borderRadius: 8, background: T.mint, color: "#fff", padding: "0 13px", fontWeight: 800, cursor: "pointer" }}><CheckCircle2 size={14} style={{ verticalAlign: -2, marginRight: 5 }} />Approve</button><button type="button" onClick={() => onApprove(store.id, "rejected", "Store approval rejected — details update karke dobara submit karein")} style={{ minHeight: 38, border: `1px solid #FECACA`, borderRadius: 8, background: "#FEF2F2", color: "#B91C1C", padding: "0 13px", fontWeight: 800, cursor: "pointer" }}>Reject</button></div></div>)}
+    </section>
+  );
+}
+
+function PaymentVerificationPanel({ stores, onVerify }) {
+  const pending = stores.filter((store) => store.paymentProofStatus === "pending");
+  return (
+    <section aria-labelledby="payment-verification-title" style={{ background: T.cream, border: `1px solid ${T.border}`, borderRadius: 14, padding: 18 }}>
+      <h2 id="payment-verification-title" style={{ margin: 0, fontFamily: "Inter", fontSize: 19, color: T.ink }}>💳 Payment Verification</h2>
+      <p style={{ color: T.muted, fontSize: 12, margin: "4px 0 16px" }}>Seller ke UTR ko check karke request approve ya reject karo. Approve ke baad plan button se activate kiya ja sakta hai.</p>
+      {pending.length === 0 ? <div style={{ background: T.paper, border: `1px dashed ${T.border}`, borderRadius: 10, padding: 30, textAlign: "center", color: T.muted, fontSize: 13 }}>Koi pending payment verification nahi hai.</div> : pending.map((store) => <div key={store.id} style={{ background: T.paper, border: `1px solid ${T.border}`, borderRadius: 11, padding: 14, marginBottom: 10 }}><div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}><div><strong style={{ color: T.ink }}>{store.name}</strong><div style={{ color: T.muted, fontSize: 12, marginTop: 4 }}>{store.email} · Requested plan: {PLAN_PRICES[store.paymentPlan]?.label || store.paymentPlan || "—"}</div><div style={{ color: T.ink, fontSize: 13, fontWeight: 800, marginTop: 9 }}>UTR: {store.paymentUtr || "—"}</div><div style={{ color: T.muted, fontSize: 11, marginTop: 4 }}>Submitted: {formatAdminDate(store.paymentSubmittedAt)}</div>{store.paymentNote && <div style={{ color: T.muted, fontSize: 12, marginTop: 8 }}>Note: {store.paymentNote}</div>}</div><span style={{ alignSelf: "flex-start", color: "#92400E", background: "#FEF3C7", borderRadius: 20, padding: "5px 9px", fontSize: 11, fontWeight: 800 }}>pending</span></div><div style={{ display: "flex", gap: 8, marginTop: 12, flexWrap: "wrap" }}><button type="button" onClick={() => onVerify(store.id, "approved", "UTR verified by Super Admin")} style={{ minHeight: 38, border: "none", borderRadius: 8, background: T.mint, color: "#fff", padding: "0 13px", fontWeight: 800, cursor: "pointer" }}><CheckCircle2 size={14} style={{ verticalAlign: -2, marginRight: 5 }} />Verify</button><button type="button" onClick={() => onVerify(store.id, "rejected", "Payment proof reject hua — UTR/screenshot dobara check karke submit karein")} style={{ minHeight: 38, border: `1px solid #FECACA`, borderRadius: 8, background: "#FEF2F2", color: "#B91C1C", padding: "0 13px", fontWeight: 800, cursor: "pointer" }}>Reject</button></div></div>)}
+    </section>
+  );
+}
+
+function AdminAuditLogPanel({ logs }) {
+  return (
+    <section aria-labelledby="audit-log-title" style={{ background: T.cream, border: `1px solid ${T.border}`, borderRadius: 14, padding: 18 }}>
+      <h2 id="audit-log-title" style={{ margin: 0, fontFamily: "Inter", fontSize: 19, color: T.ink }}>🛡️ Audit Logs</h2>
+      <p style={{ color: T.muted, fontSize: 12, margin: "4px 0 16px" }}>Admin ke actions ka immutable record. Password ya payment secret yahan save nahi hota.</p>
+      {logs.length === 0 ? <div style={{ background: T.paper, border: `1px dashed ${T.border}`, borderRadius: 10, padding: 30, textAlign: "center", color: T.muted, fontSize: 13 }}>Abhi audit activity nahi hai.</div> : <div style={{ overflowX: "auto" }}><table style={{ width: "100%", borderCollapse: "collapse", minWidth: 620, fontSize: 12 }}><thead><tr style={{ textAlign: "left", color: T.muted, borderBottom: `1px solid ${T.border}` }}><th style={{ padding: "9px 8px" }}>Time</th><th style={{ padding: "9px 8px" }}>Action</th><th style={{ padding: "9px 8px" }}>Store ID</th><th style={{ padding: "9px 8px" }}>Admin</th></tr></thead><tbody>{logs.map((log) => <tr key={log.id} style={{ borderBottom: `1px solid ${T.border}` }}><td style={{ padding: "10px 8px", color: T.muted }}>{formatAdminDate(log.createdAt)}</td><td style={{ padding: "10px 8px", color: T.ink, fontWeight: 700 }}>{log.action}</td><td style={{ padding: "10px 8px", color: T.muted, fontFamily: "monospace" }}>{log.storeId || "Platform"}</td><td style={{ padding: "10px 8px", color: T.muted }}>{log.adminEmail}</td></tr>)}</tbody></table></div>}
+    </section>
+  );
+}
+
+function SuperAdminDashboard({ stores, productsByStore = {}, globalOrders = [], storeAnalytics = {}, auditLogs = [], platformVisitors, onActivate, onBlock, onExtendTrial, onApprove, onVerifyPayment, onLogout, onResetPassword }) {
+  const [activeTab, setActiveTab] = useState("overview");
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
   const [sortBy, setSortBy] = useState("newest");
@@ -4369,14 +4575,37 @@ function SuperAdminDashboard({ stores, platformVisitors, onActivate, onBlock, on
   const PER_PAGE = 8;
 
   const enriched = useMemo(() => stores.map((s) => ({ ...s, _status: getStoreStatus(s) })), [stores]);
+  const pendingApprovals = enriched.filter((store) => getStoreApprovalStatus(store) === "pending").length;
+  const pendingPayments = enriched.filter((store) => store.paymentProofStatus === "pending").length;
+
+  const globalAnalytics = useMemo(() => {
+    const views = enriched.reduce((sum, store) => sum + (Number(store.visitorCount) || 0), 0);
+    const productViews = Object.values(storeAnalytics).reduce((sum, summary) => sum + (Number(summary.productViews) || 0), 0);
+    const addToCart = Object.values(storeAnalytics).reduce((sum, summary) => sum + (Number(summary.addToCart) || 0), 0);
+    const orders = globalOrders.length;
+    const revenue = globalOrders.filter((order) => order.status !== "Cancelled").reduce((sum, order) => sum + (Number(order.total) || 0), 0);
+    const revenueByStore = {};
+    globalOrders.filter((order) => order.status !== "Cancelled").forEach((order) => { revenueByStore[order.storeId] = (revenueByStore[order.storeId] || 0) + (Number(order.total) || 0); });
+    const topStores = enriched.map((store) => ({ id: store.id, name: store.name, revenue: revenueByStore[store.id] || 0 })).filter((store) => store.revenue > 0).sort((a, b) => b.revenue - a.revenue).slice(0, 5);
+    return { views, productViews, addToCart, orders, revenue, products: Object.values(productsByStore).reduce((sum, list) => sum + list.length, 0), conversionRate: views ? (orders / views) * 100 : 0, topStores };
+  }, [enriched, globalOrders, productsByStore, storeAnalytics]);
+
+  const exportStores = () => {
+    const ok = downloadCsv(`apna-mini-store-stores-${new Date().toISOString().slice(0, 10)}.csv`, enriched.map((store) => ({ name: store.name, email: store.email, whatsapp: store.whatsapp, status: store._status.status, approval: getStoreApprovalStatus(store), plan: store.plan || "", planExpiry: store.planExpiresAt || "", visitors: Number(store.visitorCount) || 0, products: (productsByStore[store.id] || []).length, storeId: store.id })));
+    if (!ok) window.alert("Export ke liye store data nahi hai");
+  };
+  const exportOrders = () => {
+    const ok = downloadCsv(`apna-mini-store-orders-${new Date().toISOString().slice(0, 10)}.csv`, globalOrders.map((order) => ({ orderId: order.id, storeId: order.storeId, date: order.date, customerName: order.customer?.name || "", total: order.total || 0, status: order.status || "", paymentMethod: order.paymentMethod || "", paymentStatus: order.paymentStatus || "unpaid" })));
+    if (!ok) window.alert("Export ke liye order data nahi hai");
+  };
 
   const stats = useMemo(() => {
     const total = enriched.length;
-    const active = enriched.filter((s) => s._status.status === "active").length;
+    const active = enriched.filter((s) => getStoreApprovalStatus(s) === "approved" && (s._status.status === "active" || s._status.status === "trial")).length;
     const blocked = enriched.filter((s) => s.blocked).length;
     const weekAgo = Date.now() - 7 * 86400000;
     const newThisWeek = enriched.filter((s) => s.trialStartedAt && new Date(s.trialStartedAt).getTime() > weekAgo).length;
-    const revenue = enriched.filter((s) => s._status.status === "active" && s.plan).reduce((sum, s) => sum + (PLAN_PRICES[s.plan]?.price || 0), 0);
+    const revenue = enriched.filter((s) => getStoreApprovalStatus(s) === "approved" && s._status.status === "active" && s.plan).reduce((sum, s) => sum + (PLAN_PRICES[s.plan]?.price || 0), 0);
     return { total, active, blocked, newThisWeek, revenue };
   }, [enriched]);
 
@@ -4420,8 +4649,8 @@ function SuperAdminDashboard({ stores, platformVisitors, onActivate, onBlock, on
             <span style={{ background: "#111827", color: "#fff", fontSize: 10, fontWeight: 800, letterSpacing: "0.04em", padding: "4px 9px", borderRadius: 20 }}>SUPER ADMIN</span>
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            <button aria-label="Search" style={{ width: 38, height: 38, borderRadius: 10, border: `1px solid ${T.border}`, background: "#fff", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", color: T.ink }}><Search size={16} /></button>
-            <button aria-label="Notifications" style={{ width: 38, height: 38, borderRadius: 10, border: `1px solid ${T.border}`, background: "#fff", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", color: T.ink }}><Bell size={16} /></button>
+            <button aria-label="Search stores" onClick={() => { setActiveTab("overview"); document.querySelector('input[placeholder^="Store naam"]')?.focus(); }} style={{ width: 38, height: 38, borderRadius: 10, border: `1px solid ${T.border}`, background: "#fff", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", color: T.ink }}><Search size={16} /></button>
+            <button aria-label="Open payment notifications" onClick={() => setActiveTab(pendingPayments ? "payments" : "approvals")} style={{ position: "relative", width: 38, height: 38, borderRadius: 10, border: `1px solid ${T.border}`, background: "#fff", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", color: T.ink }}><Bell size={16} />{(pendingPayments + pendingApprovals) > 0 && <span aria-label={`${pendingPayments + pendingApprovals} pending alerts`} style={{ position: "absolute", top: -4, right: -4, minWidth: 16, height: 16, borderRadius: 99, background: "#DC2626", color: "#fff", fontSize: 9, fontWeight: 800, display: "flex", alignItems: "center", justifyContent: "center" }}>{pendingPayments + pendingApprovals}</span>}</button>
             <div style={{ width: 38, height: 38, borderRadius: 10, background: `linear-gradient(135deg, ${T.mint}, #0B7A4A)`, display: "flex", alignItems: "center", justifyContent: "center", color: "#fff", fontWeight: 800, fontSize: 12 }}>AM</div>
             <button onClick={onLogout} style={{ display: "flex", alignItems: "center", gap: 6, border: `1px solid ${T.border}`, background: "#fff", color: T.ink, borderRadius: 10, padding: "9px 14px", fontSize: 12.5, fontWeight: 700, cursor: "pointer", minHeight: 38 }}>
               <LogOut size={14} /> Logout
@@ -4430,8 +4659,22 @@ function SuperAdminDashboard({ stores, platformVisitors, onActivate, onBlock, on
         </div>
       </div>
 
+      <div role="tablist" aria-label="Super Admin sections" style={{ maxWidth: 1180, margin: "0 auto", padding: "14px 20px 0", display: "flex", gap: 8, overflowX: "auto" }}>
+        <AdminTabButton active={activeTab === "overview"} label="Stores" onClick={() => setActiveTab("overview")} />
+        <AdminTabButton active={activeTab === "analytics"} label="Global Analytics" onClick={() => setActiveTab("analytics")} />
+        <AdminTabButton active={activeTab === "approvals"} label="Store Approval" count={pendingApprovals} onClick={() => setActiveTab("approvals")} />
+        <AdminTabButton active={activeTab === "payments"} label="Payments" count={pendingPayments} onClick={() => setActiveTab("payments")} />
+        <AdminTabButton active={activeTab === "audit"} label="Audit Logs" onClick={() => setActiveTab("audit")} />
+      </div>
+
       <div style={{ maxWidth: 1180, margin: "0 auto", padding: "24px 20px 80px" }}>
-        {/* Stats */}
+        {activeTab !== "overview" && <div className="sads-admin-fade">
+          {activeTab === "analytics" && <AdminAnalyticsPanel metrics={globalAnalytics} topStores={globalAnalytics.topStores} onExportStores={exportStores} onExportOrders={exportOrders} />}
+          {activeTab === "approvals" && <StoreApprovalPanel stores={enriched} onApprove={onApprove} />}
+          {activeTab === "payments" && <PaymentVerificationPanel stores={enriched} onVerify={onVerifyPayment} />}
+          {activeTab === "audit" && <AdminAuditLogPanel logs={auditLogs} />}
+        </div>}
+        {activeTab === "overview" && <div>
         <div className="sads-admin-stats" style={{ marginBottom: 28 }}>
           <AdminStatCard icon={Store} label="Total Stores" value={stats.total} sub={stats.newThisWeek > 0 ? `+${stats.newThisWeek} is hafte` : "Is hafte koi naya nahi"} tint={T.mint} />
           <AdminStatCard icon={TrendingUp} label="Active Stores" value={stats.active} sub={stats.total ? `${Math.round((stats.active / stats.total) * 100)}% of total` : "—"} tint="#2563EB" />
@@ -4558,8 +4801,9 @@ function SuperAdminDashboard({ stores, platformVisitors, onActivate, onBlock, on
             <button onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={page === 1} aria-label="Previous page" style={{ width: 36, height: 36, borderRadius: 10, border: `1px solid ${T.border}`, background: "#fff", display: "flex", alignItems: "center", justifyContent: "center", cursor: page === 1 ? "not-allowed" : "pointer", opacity: page === 1 ? 0.4 : 1, color: T.ink }}><ChevronLeft size={16} /></button>
             <span style={{ fontSize: 12.5, color: T.muted, fontWeight: 600, padding: "0 8px" }}>Page {page} / {totalPages}</span>
             <button onClick={() => setPage((p) => Math.min(totalPages, p + 1))} disabled={page === totalPages} aria-label="Next page" style={{ width: 36, height: 36, borderRadius: 10, border: `1px solid ${T.border}`, background: "#fff", display: "flex", alignItems: "center", justifyContent: "center", cursor: page === totalPages ? "not-allowed" : "pointer", opacity: page === totalPages ? 0.4 : 1, color: T.ink }}><ChevronRight size={16} /></button>
-          </div>
-        )}
+           </div>
+         )}
+         </div>}
       </div>
     </div>
   );
