@@ -10,6 +10,7 @@ import {
   trackPlatformVisit, trackStoreVisit, trackStoreAnalytics, watchReviewsForStore, watchApprovedReviews,
   createReview, setReviewStatus, deleteReview
 } from "./firestoreApi";
+import { auth } from "./firebase";
 
 /*
   DESIGN TOKENS — Apna Mini Store
@@ -568,6 +569,11 @@ export default function App() {
   const [authUser, setAuthUser] = useState(undefined);
   const [view, setView] = useState("directory");
   const [adminPreviewStoreId, setAdminPreviewStoreId] = useState(null);
+  const [supportSession, setSupportSession] = useState(null);
+  const [supportPromptStoreId, setSupportPromptStoreId] = useState(null);
+  const [supportCode, setSupportCode] = useState("");
+  const [supportGateError, setSupportGateError] = useState("");
+  const [supportGateLoading, setSupportGateLoading] = useState(false);
   const [activeStoreId, setActiveStoreId] = useState(null);
   const [toast, setToast] = useState("");
   const [selectedTheme, setSelectedTheme] = useState("classic");
@@ -761,6 +767,12 @@ export default function App() {
     : null;
   const securePreviewStore = adminPreviewStore
     ? { ...adminPreviewStore, products: productsByStore[adminPreviewStore.id] || [], orders: adminOrders.filter((order) => order.storeId === adminPreviewStore.id) }
+    : null;
+  const supportStore = supportSession
+    ? (() => {
+      const store = stores.find((item) => item.id === supportSession.storeId);
+      return store ? { ...store, products: productsByStore[store.id] || [], orders: adminOrders.filter((order) => order.storeId === store.id), reviews: reviewsByStore[store.id] || [] } : null;
+    })()
     : null;
 
   // Real Firebase Authentication — see firestoreApi.js. Passwords are never
@@ -1143,10 +1155,92 @@ export default function App() {
   };
   const openSecureSellerView = (storeId) => {
     if (!isSuperAdmin) return;
-    recordAdminAction("secure_seller_view_opened", storeId, { readOnly: true });
-    setAdminPreviewStoreId(storeId);
-    setView("admin-preview");
+    setSupportPromptStoreId(storeId);
+    setSupportCode("");
+    setSupportGateError("");
   };
+  const createSupportSession = async () => {
+    if (!supportPromptStoreId || supportGateLoading) return;
+    setSupportGateLoading(true);
+    setSupportGateError("");
+    try {
+      const idToken = await auth.currentUser?.getIdToken();
+      if (!idToken) throw new Error("Super Admin login session nahi mila");
+      const response = await fetch("/api/admin/support-session", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${idToken}` },
+        body: JSON.stringify({ storeId: supportPromptStoreId, totpCode: supportCode }),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok || !data.token) throw new Error(data.error || "Secure support session create nahi ho paya");
+      setSupportSession(data);
+      setAdminPreviewStoreId(data.storeId);
+      setSupportPromptStoreId(null);
+      setSupportCode("");
+      setView("support-dashboard");
+      flash("✅ Secure support mode 15 minute ke liye open ho gaya");
+    } catch (error) {
+      setSupportGateError(error.message || "Authenticator verification fail ho gaya");
+    } finally {
+      setSupportGateLoading(false);
+    }
+  };
+  const closeSupportSession = async () => {
+    const token = supportSession?.token;
+    if (token) {
+      try { await fetch("/api/admin/support-session", { method: "DELETE", headers: { Authorization: `Support ${token}` } }); } catch { /* local logout still clears the token */ }
+    }
+    setSupportSession(null);
+    setAdminPreviewStoreId(null);
+    setView("superadmin");
+    flash("Support mode band ho gaya");
+  };
+  const supportAction = async (action, payload = {}) => {
+    if (!supportSession?.token) throw new Error("Support session expire ho gaya");
+    const response = await fetch("/api/admin/support-action", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Support ${supportSession.token}` },
+      body: JSON.stringify({ action, ...payload }),
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      if (response.status === 401) {
+        setSupportSession(null);
+        setAdminPreviewStoreId(null);
+        setView("superadmin");
+      }
+      throw new Error(data.error || "Support action complete nahi hua");
+    }
+    return data;
+  };
+  const runSupportAction = async (action, payload, successMessage) => {
+    setSaveState("saving");
+    try {
+      await supportAction(action, payload);
+      setSaveState("idle");
+      flash(successMessage);
+    } catch (error) {
+      setSaveState("error");
+      flash(error.message || "Support action complete nahi hua");
+    }
+  };
+  const supportAddProduct = (product) => runSupportAction("create_product", { product }, "Product add ho gaya");
+  const supportUpdateProduct = (productId, product) => runSupportAction("update_product", { productId, product }, "Product update ho gaya");
+  const supportDeleteProduct = (productId) => runSupportAction("delete_product", { productId }, "Product delete ho gaya");
+  const supportUpdateStore = (patch) => runSupportAction("update_profile", { patch }, "Seller store update ho gaya");
+  const supportAddCategory = (category) => {
+    const value = String(category || "").trim();
+    if (!value || !supportStore) return;
+    return runSupportAction("update_profile", { patch: { categories: Array.from(new Set([...(supportStore.categories || []), value])) } }, "Category add ho gayi");
+  };
+  const supportDeleteCategory = (category) => {
+    if (!supportStore) return;
+    return runSupportAction("update_profile", { patch: { categories: (supportStore.categories || []).filter((item) => item !== category) } }, "Category delete ho gayi");
+  };
+  const supportUpdateOrderStatus = (orderId, status) => runSupportAction("update_order", { orderId, status }, "Order status update ho gaya");
+  const supportUpdateOrderPaymentStatus = (orderId, paymentStatus) => runSupportAction("update_order", { orderId, paymentStatus }, "Payment status update ho gaya");
+  const supportUpdateReviewStatus = (reviewId, status) => runSupportAction("update_review", { reviewId, status }, "Review update ho gaya");
+  const supportDeleteReview = (reviewId) => runSupportAction("delete_review", { reviewId }, "Review delete ho gaya");
   const submitPaymentProof = async (payload) => {
     try {
       await updateStoreProfile(session, {
@@ -1204,7 +1298,7 @@ export default function App() {
     <div style={{ background: T.paper, minHeight: "100vh", fontFamily: "Inter" }}>
       <style>{`* { box-sizing: border-box; } ::placeholder { color: ${T.ink}55; }`}</style>
 
-      {view !== "storefront" && view !== "directory" && view !== "superadmin" && view !== "admin-preview" && (
+      {view !== "storefront" && view !== "directory" && view !== "superadmin" && view !== "admin-preview" && view !== "support-dashboard" && (
         <TopBar onHome={() => setView("directory")} session={session} onDashboard={() => setView("dashboard")} onLogout={() => { signOutUser(); setView("directory"); }} isSuperAdmin={isSuperAdmin} onSuperAdminLogout={() => { signOutUser(); setView("directory"); }} />
       )}
 
@@ -1221,6 +1315,17 @@ export default function App() {
       {view === "superadmin" && isSuperAdmin && (
         <SuperAdminDashboard stores={stores} productsByStore={productsByStore} globalOrders={adminOrders} storeAnalytics={adminAnalyticsByStore} auditLogs={adminAuditLogs} announcements={announcements} supportTickets={supportTickets} platformVisitors={platformVisitors} onActivate={activatePlan} onBlock={toggleBlockStore} onExtendTrial={extendTrial} onApprove={updateStoreApproval} onVerifyPayment={updatePaymentVerification} onPublishAnnouncement={publishAnnouncement} onUpdateSupportTicket={changeSupportTicket} onViewAsSeller={openSecureSellerView} onLogout={() => { signOutUser(); setView("directory"); }} onResetPassword={sendResetEmail} />
       )}
+      {view === "support-dashboard" && isSuperAdmin && supportStore && supportSession && (
+        <div>
+          <div style={{ position: "sticky", top: 0, zIndex: 30, background: "#111827", color: "#fff", borderBottom: "1px solid #374151" }}>
+            <div style={{ maxWidth: 800, margin: "0 auto", padding: "10px 20px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+              <div style={{ fontSize: 12, fontWeight: 800 }}>🔐 SECURE SUPPORT MODE · {supportStore.name}<span style={{ display: "block", fontSize: 10.5, fontWeight: 500, color: "#D1D5DB", marginTop: 3 }}>Authenticator verified · session 15 min · password access nahi</span></div>
+              <Button variant="ghost" style={{ color: "#fff", borderColor: "#6B7280", padding: "8px 12px", fontSize: 12 }} onClick={closeSupportSession}>Support Mode Band Karo</Button>
+            </div>
+          </div>
+          <Dashboard store={supportStore} storeAnalytics={adminAnalyticsByStore[supportStore.id] || {}} announcements={announcements} supportTickets={supportTickets.filter((ticket) => ticket.storeId === supportStore.id)} onCreateSupportTicket={async () => { flash("Support mode mein naya seller ticket create nahi karna chahiye"); return false; }} onAddProduct={supportAddProduct} onUpdateProduct={supportUpdateProduct} onDeleteProduct={supportDeleteProduct} onAddCategory={supportAddCategory} onDeleteCategory={supportDeleteCategory} onUpdateStore={supportUpdateStore} onSubmitPayment={async () => false} onViewStore={() => window.open(storeUrl(supportStore), "_blank", "noopener,noreferrer")} onUpdateOrderStatus={supportUpdateOrderStatus} onUpdateOrderPaymentStatus={supportUpdateOrderPaymentStatus} onUpdateReviewStatus={supportUpdateReviewStatus} onDeleteReview={supportDeleteReview} saveState={saveState} />
+        </div>
+      )}
       {view === "admin-preview" && isSuperAdmin && securePreviewStore && (
         <SecureSellerView store={securePreviewStore} analytics={adminAnalyticsByStore[securePreviewStore.id] || {}} supportTickets={supportTickets.filter((ticket) => ticket.storeId === securePreviewStore.id)} onBack={() => { recordAdminAction("secure_seller_view_closed", securePreviewStore.id, { readOnly: true }); setAdminPreviewStoreId(null); setView("superadmin"); }} />
       )}
@@ -1235,6 +1340,7 @@ export default function App() {
         }} onAdd={addToCart} onChangeQty={changeQty} onRemove={removeFromCart} onWishlist={toggleWishlist} showCart={showCart} setShowCart={setShowCart} subtotal={subtotal} shippingFee={shippingFee} gst={gst} total={total} onCheckout={checkoutToWhatsApp} />
       )}
       <Toast msg={toast} />
+      {supportPromptStoreId && <SupportAuthModal store={stores.find((item) => item.id === supportPromptStoreId)} code={supportCode} setCode={setSupportCode} error={supportGateError} loading={supportGateLoading} onSubmit={createSupportSession} onClose={() => { if (!supportGateLoading) setSupportPromptStoreId(null); }} />}
     </div>
   );
 }
@@ -4668,6 +4774,25 @@ function AdminProgressBar({ status, daysLeft, totalDays }) {
   );
 }
 
+function SupportAuthModal({ store, code, setCode, error, loading, onSubmit, onClose }) {
+  return (
+    <div role="dialog" aria-modal="true" aria-labelledby="support-auth-title" style={{ position: "fixed", inset: 0, zIndex: 100, background: "rgba(15,23,42,0.58)", display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }} onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
+      <div style={{ width: "min(100%, 430px)", background: T.cream, border: `1px solid ${T.border}`, borderRadius: 16, padding: 22, boxShadow: "0 24px 80px rgba(15,23,42,0.25)" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "flex-start" }}>
+          <div><div style={{ color: "#7C3AED", fontSize: 11, fontWeight: 800, letterSpacing: "0.04em" }}>SECURE SUPPORT LOGIN</div><h2 id="support-auth-title" style={{ color: T.ink, fontSize: 21, margin: "5px 0 4px" }}>Seller support mode kholen</h2><p style={{ color: T.muted, fontSize: 12, lineHeight: 1.5, margin: 0 }}>{store?.name || "Selected store"} ke liye Google Authenticator ka 6-digit code daaliye.</p></div>
+          <button type="button" aria-label="Close" onClick={onClose} style={{ border: "none", background: "transparent", color: T.muted, fontSize: 22, cursor: "pointer", lineHeight: 1 }}>×</button>
+        </div>
+        <div style={{ display: "flex", gap: 9, alignItems: "flex-start", background: "#EFF6FF", color: "#1D4ED8", border: "1px solid #BFDBFE", borderRadius: 10, padding: "10px 11px", fontSize: 11.5, lineHeight: 1.45, margin: "16px 0" }}><ShieldCheck size={15} style={{ flexShrink: 0, marginTop: 1 }} /><span>Session 15 minute ke baad automatically expire hogi. Seller ka password, secret ya auth setting is mode mein available nahi hogi.</span></div>
+        <label style={{ display: "block", color: T.ink, fontSize: 12.5, fontWeight: 700 }}>Authenticator code
+          <input autoFocus inputMode="numeric" pattern="[0-9]*" maxLength={6} value={code} onChange={(event) => setCode(event.target.value.replace(/\D/g, "").slice(0, 6))} onKeyDown={(event) => { if (event.key === "Enter") onSubmit(); }} placeholder="000000" style={{ width: "100%", minHeight: 48, marginTop: 7, padding: "0 13px", border: `2px solid ${error ? "#FCA5A5" : T.border}`, borderRadius: 9, fontFamily: "monospace", fontSize: 22, letterSpacing: "0.25em", textAlign: "center", boxSizing: "border-box" }} />
+        </label>
+        {error && <div role="alert" style={{ color: "#B91C1C", background: "#FEF2F2", border: "1px solid #FECACA", borderRadius: 8, padding: "8px 10px", marginTop: 10, fontSize: 11.5 }}>{error}</div>}
+        <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 18 }}><Button variant="ghost" onClick={onClose} disabled={loading}>Cancel</Button><Button variant="primary" onClick={onSubmit} disabled={loading || code.length !== 6}>{loading ? "Verify ho raha hai..." : "Verify & Open"}</Button></div>
+      </div>
+    </div>
+  );
+}
+
 function AdminTabButton({ active, label, count, onClick }) {
   return (
     <button type="button" role="tab" aria-selected={active} onClick={onClick} style={{ minHeight: 40, padding: "9px 14px", borderRadius: 10, border: `1px solid ${active ? T.ink : T.border}`, background: active ? T.ink : "#fff", color: active ? "#fff" : T.ink, fontSize: 12.5, fontWeight: 800, cursor: "pointer", whiteSpace: "nowrap" }}>
@@ -5083,7 +5208,7 @@ function SuperAdminDashboard({ stores, productsByStore = {}, globalOrders = [], 
 
                 {/* Actions */}
                 <div className="sads-admin-actions" style={{ marginBottom: 16 }}>
-                  <AdminActionBtn icon={Eye} label="Secure View" sub="Read only" tone="primary" onClick={() => onViewAsSeller(s.id)} />
+                  <AdminActionBtn icon={ShieldCheck} label="Support Login" sub="Authenticator" tone="primary" onClick={() => onViewAsSeller(s.id)} />
                   <AdminActionBtn icon={Clock} label="+7 Days" sub="Trial" onClick={() => onExtendTrial(s.id, 7)} />
                   <AdminActionBtn icon={QrCode} label="₹500" sub="Monthly" tone="primary" onClick={() => onActivate(s.id, "monthly")} />
                   <AdminActionBtn icon={QrCode} label="₹1350" sub="3 Months" onClick={() => onActivate(s.id, "quarterly")} />

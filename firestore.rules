@@ -244,6 +244,16 @@ service cloud.firestore {
       allow delete: if false;
     }
 
+    // Support-session tokens are created and consumed only by the server-side
+    // Vercel functions. Browser clients must never read, create, or revoke one.
+    match /supportSessions/{sessionId} {
+      allow read, write: if false;
+    }
+
+    match /supportRateLimits/{adminUid} {
+      allow read, write: if false;
+    }
+
     // Immutable administrative history. It records actions, never passwords
     // or payment secrets.
     match /auditLogs/{logId} {
