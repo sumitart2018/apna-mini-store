@@ -169,10 +169,12 @@ export default async function handler(req, res) {
     const body = getBody(req);
     const storeId = String(body.storeId || "").trim();
     const code = String(body.totpCode || "").trim();
+    const adminUid = String(decoded.sub || decoded.uid || "").trim();
+    if (!adminUid) return sendJson(res, 401, { error: "Admin user ID missing hai" });
     if (!/^[A-Za-z0-9_-]{10,128}$/.test(storeId)) return sendJson(res, 400, { error: "Store reference invalid hai" });
     if (!process.env.ADMIN_SUPPORT_TOTP_SECRET) return sendJson(res, 503, { error: "Admin Authenticator secret Vercel mein configure nahi hai" });
 
-    const allowed = await checkAttemptLimit(admin.db, decoded.uid);
+    const allowed = await checkAttemptLimit(admin.db, adminUid);
     if (!allowed) return sendJson(res, 429, { error: "Bahut attempts ho gaye. 10 minute baad try karo." });
     if (!verifyTotp(code, process.env.ADMIN_SUPPORT_TOTP_SECRET)) return sendJson(res, 401, { error: "Authenticator code galat ya expire ho gaya" });
 
@@ -183,7 +185,7 @@ export default async function handler(req, res) {
     const tokenHash = hashToken(rawToken);
     const expiresAt = Date.now() + SESSION_TTL_MS;
     await admin.db.doc(`supportSessions/${tokenHash}`).set({
-      adminUid: decoded.uid,
+      adminUid,
       adminEmail: SUPER_ADMIN_EMAIL,
       storeId,
       scopes: ["profile", "products", "orders", "reviews"],
