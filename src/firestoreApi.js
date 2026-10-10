@@ -159,6 +159,33 @@ export async function setPaymentVerification(uid, paymentProofStatus, note = "")
     paymentVerifiedAt: serverTimestamp(),
   });
 }
+
+// Optional seller KYC request. KYC is kept in its own private collection so
+// identity details never become part of the public store profile document.
+export async function saveSellerKyc(storeId, payload = {}) {
+  await setDoc(doc(db, "sellerKyc", storeId), {
+    storeId,
+    legalName: String(payload.legalName || "").trim().slice(0, 120),
+    businessName: String(payload.businessName || "").trim().slice(0, 120),
+    businessType: String(payload.businessType || "individual").trim().slice(0, 40),
+    documentType: String(payload.documentType || "").trim().slice(0, 40),
+    documentLast4: String(payload.documentLast4 || "").replace(/\D/g, "").slice(-4),
+    note: String(payload.note || "").trim().slice(0, 500),
+    status: "pending",
+    submittedAt: serverTimestamp(),
+    updatedAt: serverTimestamp(),
+  }, { merge: true });
+}
+
+export async function reviewSellerKyc(storeId, status, reviewNote = "", reviewedBy = "") {
+  await updateDoc(doc(db, "sellerKyc", storeId), {
+    status,
+    reviewNote: String(reviewNote || "").trim().slice(0, 500),
+    reviewedBy: String(reviewedBy || "").trim().slice(0, 160),
+    reviewedAt: serverTimestamp(),
+    updatedAt: serverTimestamp(),
+  });
+}
 export async function writeAdminAuditLog(action, adminEmail, storeId = "", details = {}) {
   await addDoc(collection(db, "auditLogs"), {
     action,
@@ -247,6 +274,22 @@ export function watchOrdersForStore(storeId, onChange, onError) {
       onChange(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
     },
     (err) => { console.error("watchOrdersForStore failed:", err); if (onError) onError(err); }
+  );
+}
+
+export function watchSellerKyc(storeId, onChange, onError) {
+  return onSnapshot(
+    doc(db, "sellerKyc", storeId),
+    (snap) => onChange(snap.exists() ? { id: snap.id, ...snap.data() } : null),
+    (err) => { console.error("watchSellerKyc failed:", err); if (onError) onError(err); }
+  );
+}
+
+export function watchAllSellerKyc(onChange, onError) {
+  return onSnapshot(
+    collection(db, "sellerKyc"),
+    (snap) => onChange(snap.docs.map((d) => ({ id: d.id, ...d.data() }))),
+    (err) => { console.error("watchAllSellerKyc failed:", err); if (onError) onError(err); }
   );
 }
 

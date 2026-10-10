@@ -3,11 +3,11 @@ import { ShoppingCart, MessageCircle, Palette, Package, QrCode, BarChart3, Shiel
 import {
   watchAllStores, watchAllProducts, watchOrdersForStore, watchAllOrders, watchAllStoreAnalytics, watchAdminAuditLogs, watchAnnouncements, watchAllSupportTickets, watchSupportTicketsForStore, watchPlatformAnalytics, watchPlatformSettings, watchStoreAnalytics, watchAuthState,
   signUpSeller, signInSeller, signOutUser, friendlyAuthError,
-  updateStoreProfile, addStoreCategory, removeStoreCategory,
+  updateStoreProfile, addStoreCategory, removeStoreCategory, saveSellerKyc, reviewSellerKyc,
   setStorePlan, setStoreBlocked, setStoreMaintenance, setPlatformMaintenance, setTrialStartedAt, setStoreApproval, setPaymentVerification, writeAdminAuditLog, createAnnouncement, createSupportTicket, updateSupportTicket,
   createProduct, editProduct, removeProduct,
   createOrder, setOrderStatus, setOrderPaymentStatus, uploadStoreImage, resetSellerPassword, signInWithGoogle,
-  trackPlatformVisit, trackStoreVisit, trackStoreAnalytics, watchReviewsForStore, watchApprovedReviews,
+  trackPlatformVisit, trackStoreVisit, trackStoreAnalytics, watchReviewsForStore, watchApprovedReviews, watchSellerKyc, watchAllSellerKyc,
   createReview, setReviewStatus, deleteReview
 } from "./firestoreApi";
 import { auth } from "./firebase";
@@ -572,6 +572,8 @@ export default function App() {
   const [adminAuditLogs, setAdminAuditLogs] = useState([]);
   const [announcements, setAnnouncements] = useState([]);
   const [supportTickets, setSupportTickets] = useState([]);
+  const [sellerKycByStore, setSellerKycByStore] = useState({});
+  const [adminSellerKyc, setAdminSellerKyc] = useState([]);
   const [reviewsByStore, setReviewsByStore] = useState({});
   const [platformVisitors, setPlatformVisitors] = useState(0);
   const [platformMaintenance, setPlatformMaintenanceState] = useState({ enabled: false, message: "Platform maintenance chal raha hai. Kripya thodi der baad dobara aaiye." });
@@ -673,6 +675,8 @@ export default function App() {
       setAdminAuditLogs([]);
       setAnnouncements([]);
       setSupportTickets([]);
+      setSellerKycByStore({});
+      setAdminSellerKyc([]);
       return;
     }
     const unsubAnnouncements = watchAnnouncements(setAnnouncements, (err) => console.warn("Announcements load nahi hue:", err));
@@ -681,7 +685,8 @@ export default function App() {
       const unsubAdminAnalytics = watchAllStoreAnalytics(setAdminAnalyticsByStore, (err) => console.warn("Global analytics load nahi hua:", err));
       const unsubAuditLogs = watchAdminAuditLogs(setAdminAuditLogs, (err) => console.warn("Audit logs load nahi hue:", err));
       const unsubSupport = watchAllSupportTickets(setSupportTickets, (err) => console.warn("Support tickets load nahi hue:", err));
-      return () => { unsubAnnouncements(); unsubAdminOrders(); unsubAdminAnalytics(); unsubAuditLogs(); unsubSupport(); };
+      const unsubKyc = watchAllSellerKyc(setAdminSellerKyc, (err) => console.warn("Seller KYC load nahi hua:", err));
+      return () => { unsubAnnouncements(); unsubAdminOrders(); unsubAdminAnalytics(); unsubAuditLogs(); unsubSupport(); unsubKyc(); };
     }
     const unsubOrders = watchOrdersForStore(authUser.uid, (orders) => {
       setOrdersByStore({ [authUser.uid]: orders });
@@ -693,7 +698,10 @@ export default function App() {
       setAnalyticsByStore({ [authUser.uid]: analytics });
     }, (err) => { console.warn("Analytics load nahi hua:", err); });
     const unsubSupport = watchSupportTicketsForStore(authUser.uid, setSupportTickets, (err) => { console.warn("Support tickets load nahi hue:", err); });
-    return () => { unsubAnnouncements(); unsubOrders(); unsubReviews(); unsubAnalytics(); unsubSupport(); };
+    const unsubKyc = watchSellerKyc(authUser.uid, (kyc) => {
+      setSellerKycByStore({ [authUser.uid]: kyc });
+    }, (err) => { console.warn("Seller KYC load nahi hua:", err); });
+    return () => { unsubAnnouncements(); unsubOrders(); unsubReviews(); unsubAnalytics(); unsubSupport(); unsubKyc(); };
   }, [authUser, isSuperAdmin]);
 
   // On first load, if the browser already has a persisted login, jump
@@ -1137,6 +1145,26 @@ export default function App() {
       flash("Payment verification update nahi hua");
     }
   };
+  const submitKycRequest = async (payload) => {
+    setSaveState("saving");
+    try {
+      await saveSellerKyc(session, payload);
+      setSaveState("idle");
+      flash("Optional KYC request submit ho gayi");
+    } catch (e) {
+      setSaveState("error");
+      flash("KYC request save nahi hui — dobara try karo");
+    }
+  };
+  const reviewKycRequest = async (storeId, status, note = "") => {
+    try {
+      await reviewSellerKyc(storeId, status, note, authUser?.email || SUPER_ADMIN_EMAIL);
+      recordAdminAction(`seller_kyc_${status}`, storeId, { note });
+      flash(status === "approved" ? "Seller KYC approve ho gayi" : "Seller KYC reject ho gayi");
+    } catch (e) {
+      flash("Seller KYC review save nahi hua");
+    }
+  };
   const updatePlatformMaintenance = async ({ enabled, message }) => {
     try {
       const next = { enabled: Boolean(enabled), message: String(message || "").trim().slice(0, 240) };
@@ -1351,7 +1379,7 @@ export default function App() {
 )}
       {view === "superadmin-login" && <SuperAdminLogin onSubmit={superAdminLogin} onBack={() => setView("directory")} />}
       {view === "superadmin" && isSuperAdmin && (
-        <SuperAdminDashboard stores={stores} productsByStore={productsByStore} globalOrders={adminOrders} storeAnalytics={adminAnalyticsByStore} auditLogs={adminAuditLogs} announcements={announcements} supportTickets={supportTickets} platformVisitors={platformVisitors} platformMaintenance={platformMaintenance} onUpdatePlatformMaintenance={updatePlatformMaintenance} onUpdateStoreMaintenance={updateStoreMaintenance} onActivate={activatePlan} onBlock={toggleBlockStore} onExtendTrial={extendTrial} onApprove={updateStoreApproval} onVerifyPayment={updatePaymentVerification} onPublishAnnouncement={publishAnnouncement} onUpdateSupportTicket={changeSupportTicket} onViewAsSeller={openSecureSellerView} onLogout={() => { signOutUser(); setView("directory"); }} onResetPassword={sendResetEmail} />
+        <SuperAdminDashboard stores={stores} productsByStore={productsByStore} globalOrders={adminOrders} storeAnalytics={adminAnalyticsByStore} auditLogs={adminAuditLogs} announcements={announcements} supportTickets={supportTickets} sellerKyc={adminSellerKyc} platformVisitors={platformVisitors} platformMaintenance={platformMaintenance} onUpdatePlatformMaintenance={updatePlatformMaintenance} onUpdateStoreMaintenance={updateStoreMaintenance} onReviewKyc={reviewKycRequest} onActivate={activatePlan} onBlock={toggleBlockStore} onExtendTrial={extendTrial} onApprove={updateStoreApproval} onVerifyPayment={updatePaymentVerification} onPublishAnnouncement={publishAnnouncement} onUpdateSupportTicket={changeSupportTicket} onViewAsSeller={openSecureSellerView} onLogout={() => { signOutUser(); setView("directory"); }} onResetPassword={sendResetEmail} />
       )}
       {view === "support-dashboard" && isSuperAdmin && supportStore && supportSession && (
         <div>
@@ -1361,14 +1389,14 @@ export default function App() {
               <Button variant="ghost" style={{ color: "#fff", borderColor: "#6B7280", padding: "8px 12px", fontSize: 12 }} onClick={closeSupportSession}>Support Mode Band Karo</Button>
             </div>
           </div>
-          <Dashboard store={supportStore} storeAnalytics={adminAnalyticsByStore[supportStore.id] || {}} announcements={announcements} supportTickets={supportTickets.filter((ticket) => ticket.storeId === supportStore.id)} onCreateSupportTicket={async () => { flash("Support mode mein naya seller ticket create nahi karna chahiye"); return false; }} onAddProduct={supportAddProduct} onUpdateProduct={supportUpdateProduct} onDeleteProduct={supportDeleteProduct} onAddCategory={supportAddCategory} onDeleteCategory={supportDeleteCategory} onUpdateStore={supportUpdateStore} onSubmitPayment={async () => false} onViewStore={() => window.open(storeUrl(supportStore), "_blank", "noopener,noreferrer")} onUpdateOrderStatus={supportUpdateOrderStatus} onUpdateOrderPaymentStatus={supportUpdateOrderPaymentStatus} onUpdateReviewStatus={supportUpdateReviewStatus} onDeleteReview={supportDeleteReview} saveState={saveState} />
+          <Dashboard store={supportStore} storeAnalytics={adminAnalyticsByStore[supportStore.id] || {}} announcements={announcements} supportTickets={supportTickets.filter((ticket) => ticket.storeId === supportStore.id)} showKyc={false} onCreateSupportTicket={async () => { flash("Support mode mein naya seller ticket create nahi karna chahiye"); return false; }} onAddProduct={supportAddProduct} onUpdateProduct={supportUpdateProduct} onDeleteProduct={supportDeleteProduct} onAddCategory={supportAddCategory} onDeleteCategory={supportDeleteCategory} onUpdateStore={supportUpdateStore} onSubmitPayment={async () => false} onViewStore={() => window.open(storeUrl(supportStore), "_blank", "noopener,noreferrer")} onUpdateOrderStatus={supportUpdateOrderStatus} onUpdateOrderPaymentStatus={supportUpdateOrderPaymentStatus} onUpdateReviewStatus={supportUpdateReviewStatus} onDeleteReview={supportDeleteReview} saveState={saveState} />
         </div>
       )}
       {view === "admin-preview" && isSuperAdmin && securePreviewStore && (
         <SecureSellerView store={securePreviewStore} analytics={adminAnalyticsByStore[securePreviewStore.id] || {}} supportTickets={supportTickets.filter((ticket) => ticket.storeId === securePreviewStore.id)} onBack={() => { recordAdminAction("secure_seller_view_closed", securePreviewStore.id, { readOnly: true }); setAdminPreviewStoreId(null); setView("superadmin"); }} />
       )}
       {view === "dashboard" && ownerStore && (
-        <Dashboard store={ownerStore} storeAnalytics={analyticsByStore[ownerStore.id] || {}} announcements={announcements} supportTickets={supportTickets} onCreateSupportTicket={submitSupportTicket} onAddProduct={addProduct} onUpdateProduct={updateProduct} onDeleteProduct={deleteProduct} onAddCategory={addCategory} onDeleteCategory={deleteCategory} onUpdateStore={updateOwnerStore} onSubmitPayment={submitPaymentProof} onViewStore={() => openStore(ownerStore.id)} onUpdateOrderStatus={updateOrderStatus} onUpdateOrderPaymentStatus={updateOrderPaymentStatus} onUpdateReviewStatus={updateReviewStatus} onDeleteReview={removeReview} saveState={saveState} />
+        <Dashboard store={ownerStore} storeKyc={sellerKycByStore[ownerStore.id] || null} storeAnalytics={analyticsByStore[ownerStore.id] || {}} announcements={announcements} supportTickets={supportTickets} onSubmitKyc={submitKycRequest} onCreateSupportTicket={submitSupportTicket} onAddProduct={addProduct} onUpdateProduct={updateProduct} onDeleteProduct={deleteProduct} onAddCategory={addCategory} onDeleteCategory={deleteCategory} onUpdateStore={updateOwnerStore} onSubmitPayment={submitPaymentProof} onViewStore={() => openStore(ownerStore.id)} onUpdateOrderStatus={updateOrderStatus} onUpdateOrderPaymentStatus={updateOrderPaymentStatus} onUpdateReviewStatus={updateReviewStatus} onDeleteReview={removeReview} saveState={saveState} />
       )}
       {view === "storefront" && activeStore && activeStore.maintenanceMode && (
         <StoreMaintenanceScreen store={activeStore} />
@@ -2710,7 +2738,107 @@ function AdvancedAnalyticsPanel({ metrics }) {
   );
 }
 
-function Dashboard({ store, storeAnalytics = {}, announcements = [], supportTickets = [], onCreateSupportTicket, onAddProduct, onUpdateProduct, onDeleteProduct, onAddCategory, onDeleteCategory, onUpdateStore, onSubmitPayment, onViewStore, onUpdateOrderStatus, onUpdateOrderPaymentStatus, onUpdateReviewStatus, onDeleteReview, saveState }) {
+function SellerKycPanel({ store, kyc, onSubmit }) {
+  const [form, setForm] = useState({
+    legalName: kyc?.legalName || store?.ownerName || "",
+    businessName: kyc?.businessName || store?.name || "",
+    businessType: kyc?.businessType || "individual",
+    documentType: kyc?.documentType || "",
+    documentLast4: kyc?.documentLast4 || "",
+    note: kyc?.note || "",
+  });
+  const [error, setError] = useState("");
+  const [saving, setSaving] = useState(false);
+  const status = kyc?.status || "not_started";
+  const statusCopy = {
+    not_started: ["Not submitted", "#64748B", "#F8FAFC"],
+    pending: ["Pending review", "#B45309", "#FFFBEB"],
+    approved: ["Verified", "#047857", "#ECFDF5"],
+    rejected: ["Changes needed", "#B91C1C", "#FEF2F2"],
+  }[status] || ["Not submitted", "#64748B", "#F8FAFC"];
+
+  useEffect(() => {
+    setForm({
+      legalName: kyc?.legalName || store?.ownerName || "",
+      businessName: kyc?.businessName || store?.name || "",
+      businessType: kyc?.businessType || "individual",
+      documentType: kyc?.documentType || "",
+      documentLast4: kyc?.documentLast4 || "",
+      note: kyc?.note || "",
+    });
+  }, [kyc, store?.name, store?.ownerName]);
+
+  const update = (key, value) => setForm((current) => ({ ...current, [key]: value }));
+  const submit = async () => {
+    if (!form.legalName.trim() || !form.businessName.trim() || !form.documentType) {
+      setError("Legal name, business name aur document type zaroori hain.");
+      return;
+    }
+    if (form.documentLast4 && !/^\d{4}$/.test(form.documentLast4)) {
+      setError("Document reference mein sirf 4 digits daalo.");
+      return;
+    }
+    setError("");
+    setSaving(true);
+    try {
+      await onSubmit(form);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <section aria-labelledby="seller-kyc-title" style={{ background: T.cream, border: "1px solid " + T.border, borderRadius: 14, padding: 18, maxWidth: 640 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, flexWrap: "wrap" }}>
+        <div>
+          <h2 id="seller-kyc-title" style={{ margin: 0, color: T.ink, fontFamily: "Inter", fontSize: 19 }}>🪪 Seller KYC <span style={{ color: T.muted, fontSize: 12, fontWeight: 700 }}>(Optional)</span></h2>
+          <p style={{ color: T.muted, fontSize: 12, lineHeight: 1.55, margin: "5px 0 0" }}>Trust badge aur business verification ke liye request bhejo. KYC ke bina bhi aapka store live aur usable rahega.</p>
+        </div>
+        <span style={{ color: statusCopy[1], background: statusCopy[2], borderRadius: 20, padding: "6px 10px", fontSize: 11, fontWeight: 800 }}>{statusCopy[0]}</span>
+      </div>
+
+      {status === "approved" && <div role="status" style={{ marginTop: 16, background: "#ECFDF5", border: "1px solid #A7F3D0", color: "#047857", borderRadius: 10, padding: 12, fontSize: 12, lineHeight: 1.5 }}>✅ Aapka seller profile verified hai.</div>}
+      {status === "pending" && <div role="status" style={{ marginTop: 16, background: "#FFFBEB", border: "1px solid #FDE68A", color: "#92400E", borderRadius: 10, padding: 12, fontSize: 12, lineHeight: 1.5 }}>⏳ Request admin review mein hai. Is dauran store par koi restriction nahi hai.</div>}
+      {status === "rejected" && <div role="alert" style={{ marginTop: 16, background: "#FEF2F2", border: "1px solid #FECACA", color: "#B91C1C", borderRadius: 10, padding: 12, fontSize: 12, lineHeight: 1.5 }}>Admin note: {kyc?.reviewNote || "Details check karke dobara submit karo."}</div>}
+
+      <div style={{ marginTop: 18, display: "grid", gap: 12 }}>
+        <Field label="Legal name" placeholder="ID/document par diya hua naam" value={form.legalName} onChange={(event) => update("legalName", event.target.value)} />
+        <Field label="Business / store name" placeholder="Business ka naam" value={form.businessName} onChange={(event) => update("businessName", event.target.value)} />
+        <label style={{ display: "block" }}>
+          <span style={{ color: T.ink, fontSize: 13, fontWeight: 700 }}>Business type</span>
+          <select value={form.businessType} onChange={(event) => update("businessType", event.target.value)} style={{ display: "block", width: "100%", marginTop: 6, minHeight: 42, padding: "9px 11px", borderRadius: 8, border: "2px solid " + T.ink + "22", fontFamily: "Inter", fontSize: 14, background: T.cream }}>
+            <option value="individual">Individual seller</option>
+            <option value="proprietorship">Proprietorship</option>
+            <option value="partnership">Partnership</option>
+            <option value="company">Private/Public company</option>
+          </select>
+        </label>
+        <label style={{ display: "block" }}>
+          <span style={{ color: T.ink, fontSize: 13, fontWeight: 700 }}>Verification document</span>
+          <select value={form.documentType} onChange={(event) => update("documentType", event.target.value)} style={{ display: "block", width: "100%", marginTop: 6, minHeight: 42, padding: "9px 11px", borderRadius: 8, border: "2px solid " + T.ink + "22", fontFamily: "Inter", fontSize: 14, background: T.cream }}>
+            <option value="">Document select karo</option>
+            <option value="PAN">PAN</option>
+            <option value="GSTIN">GSTIN</option>
+            <option value="Udyam">Udyam Registration</option>
+            <option value="Shop License">Shop / Trade License</option>
+          </select>
+        </label>
+        <Field label="Document reference ke last 4 digits (optional)" placeholder="1234" value={form.documentLast4} maxLength={4} inputMode="numeric" onChange={(event) => update("documentLast4", event.target.value.replace(/\D/g, "").slice(0, 4))} />
+        <label style={{ display: "block" }}>
+          <span style={{ color: T.ink, fontSize: 13, fontWeight: 700 }}>Admin ke liye note (optional)</span>
+          <textarea value={form.note} maxLength={500} rows={3} onChange={(event) => update("note", event.target.value)} placeholder="Business ke baare mein short note..." style={{ display: "block", width: "100%", marginTop: 6, padding: "10px 11px", borderRadius: 8, border: "2px solid " + T.ink + "22", fontFamily: "Inter", fontSize: 14, resize: "vertical", background: T.cream }} />
+        </label>
+      </div>
+
+      <div role="note" style={{ marginTop: 14, background: "#EFF6FF", border: "1px solid #BFDBFE", color: "#1D4ED8", borderRadius: 10, padding: 11, fontSize: 11.5, lineHeight: 1.5 }}>Privacy: yahan Aadhaar/PAN ka full number ya document photo upload mat karo. Abhi sirf verification request aur last-4 reference liya ja raha hai.</div>
+      {error && <div role="alert" style={{ color: T.red, fontSize: 12, marginTop: 10 }}>{error}</div>}
+      {status !== "pending" && <Button disabled={saving} onClick={submit} style={{ marginTop: 14 }}>{saving ? "Submitting..." : status === "rejected" ? "Dobara Submit Karo" : "Optional KYC Submit Karo"}</Button>}
+      {kyc?.updatedAt && <div style={{ color: T.muted, fontSize: 10.5, marginTop: 10 }}>Last update: {formatAdminDate(kyc.updatedAt)}</div>}
+    </section>
+  );
+}
+
+function Dashboard({ store, storeKyc = null, storeAnalytics = {}, announcements = [], supportTickets = [], showKyc = true, onSubmitKyc, onCreateSupportTicket, onAddProduct, onUpdateProduct, onDeleteProduct, onAddCategory, onDeleteCategory, onUpdateStore, onSubmitPayment, onViewStore, onUpdateOrderStatus, onUpdateOrderPaymentStatus, onUpdateReviewStatus, onDeleteReview, saveState }) {
   const [tab, setTab] = useState("products");
   const orders = store.orders || [];
   const reviews = store.reviews || [];
@@ -2885,9 +3013,9 @@ function Dashboard({ store, storeAnalytics = {}, announcements = [], supportTick
       <SellerAnnouncements announcements={announcements} />
 
       <div style={{ display: "flex", gap: 8, marginBottom: 20, flexWrap: "wrap" }}>
-        {["products", "categories", "orders", "analytics", "reviews", "support", "billing", "profile", "settings"].map((t) => (
+        {["products", "categories", "orders", "analytics", "reviews", "support", "billing", "profile", "settings", ...(showKyc ? ["kyc"] : [])].map((t) => (
           <button key={t} onClick={() => setTab(t)} style={{ padding: "10px 18px", minHeight: 44, borderRadius: 8, border: `1px solid ${T.border}`, background: tab === t ? T.marigold : "transparent", fontFamily: "Inter", fontWeight: 700, cursor: "pointer", color: tab === t ? "#fff" : T.ink, textTransform: "capitalize", position: "relative" }}>
-            {t === "products" ? "Products" : t === "categories" ? "Categories" : t === "orders" ? `Orders${orders.length ? ` (${orders.length})` : ""}` : t === "analytics" ? "Analytics" : t === "reviews" ? `Reviews${reviews.filter((review) => review.status === "pending").length ? ` (${reviews.filter((review) => review.status === "pending").length})` : ""}` : t === "support" ? `Support${supportTickets.filter((ticket) => !["resolved", "closed"].includes(ticket.status)).length ? ` (${supportTickets.filter((ticket) => !["resolved", "closed"].includes(ticket.status)).length})` : ""}` : t === "billing" ? "Billing" : t === "profile" ? "Store Profile" : "Cart Settings"}
+            {t === "kyc" ? "KYC (Optional)" : t === "products" ? "Products" : t === "categories" ? "Categories" : t === "orders" ? `Orders${orders.length ? ` (${orders.length})` : ""}` : t === "analytics" ? "Analytics" : t === "reviews" ? `Reviews${reviews.filter((review) => review.status === "pending").length ? ` (${reviews.filter((review) => review.status === "pending").length})` : ""}` : t === "support" ? `Support${supportTickets.filter((ticket) => !["resolved", "closed"].includes(ticket.status)).length ? ` (${supportTickets.filter((ticket) => !["resolved", "closed"].includes(ticket.status)).length})` : ""}` : t === "billing" ? "Billing" : t === "profile" ? "Store Profile" : "Cart Settings"}
           </button>
         ))}
       </div>
@@ -2895,6 +3023,8 @@ function Dashboard({ store, storeAnalytics = {}, announcements = [], supportTick
       {tab === "analytics" && <AdvancedAnalyticsPanel metrics={advancedAnalytics} />}
 
       {tab === "support" && <SupportTicketsSellerPanel tickets={supportTickets} onCreate={onCreateSupportTicket} />}
+
+      {tab === "kyc" && showKyc && <SellerKycPanel store={store} kyc={storeKyc} onSubmit={onSubmitKyc} />}
 
       {tab === "categories" && (
         <div>
@@ -5144,7 +5274,71 @@ function SecureSellerView({ store, analytics = {}, supportTickets = [], onBack }
   );
 }
 
-function SuperAdminDashboard({ stores, productsByStore = {}, globalOrders = [], storeAnalytics = {}, auditLogs = [], announcements = [], supportTickets = [], platformVisitors, platformMaintenance, onUpdatePlatformMaintenance, onUpdateStoreMaintenance, onActivate, onBlock, onExtendTrial, onApprove, onVerifyPayment, onPublishAnnouncement, onUpdateSupportTicket, onViewAsSeller, onLogout, onResetPassword }) {
+function SellerKycAdminPanel({ requests = [], stores = [], onReview }) {
+  const [filter, setFilter] = useState("pending");
+  const [notes, setNotes] = useState({});
+  const storeMap = useMemo(() => Object.fromEntries(stores.map((store) => [store.id, store])), [stores]);
+  const visible = requests
+    .filter((request) => filter === "all" || (request.status || "pending") === filter)
+    .sort((a, b) => {
+      const time = (value) => value?.toMillis ? value.toMillis() : (value ? new Date(value).getTime() : 0);
+      return time(b.updatedAt || b.submittedAt) - time(a.updatedAt || a.submittedAt);
+    });
+  const updateNote = (id, value) => setNotes((current) => ({ ...current, [id]: value }));
+
+  return (
+    <section aria-labelledby="seller-kyc-admin-title" style={{ background: T.cream, border: "1px solid " + T.border, borderRadius: 14, padding: 18 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, flexWrap: "wrap", marginBottom: 16 }}>
+        <div>
+          <h2 id="seller-kyc-admin-title" style={{ margin: 0, color: T.ink, fontFamily: "Inter", fontSize: 19 }}>🪪 Seller KYC Verification</h2>
+          <p style={{ color: T.muted, fontSize: 12, lineHeight: 1.5, margin: "4px 0 0" }}>Optional requests ko manually review karo. KYC approve/reject karne se store access ya publishing automatically change nahi hoti.</p>
+        </div>
+        <select value={filter} onChange={(event) => setFilter(event.target.value)} aria-label="KYC filter" style={{ minHeight: 36, border: "1px solid " + T.border, borderRadius: 8, padding: "0 10px", background: "#fff", fontFamily: "Inter", fontSize: 12 }}>
+          <option value="pending">Pending</option>
+          <option value="approved">Approved</option>
+          <option value="rejected">Rejected</option>
+          <option value="all">All requests</option>
+        </select>
+      </div>
+
+      {visible.length === 0 ? (
+        <div role="status" style={{ background: T.paper, border: "1px dashed " + T.border, borderRadius: 10, padding: 28, textAlign: "center", color: T.muted, fontSize: 12 }}>
+          {filter === "pending" ? "Abhi koi pending KYC request nahi hai." : "Is filter mein KYC request nahi mili."}
+        </div>
+      ) : (
+        <div style={{ display: "grid", gap: 12 }}>
+          {visible.map((request) => {
+            const store = storeMap[request.storeId || request.id];
+            const status = request.status || "pending";
+            const note = notes[request.id] ?? request.reviewNote ?? "";
+            return (
+              <article key={request.id} style={{ background: "#fff", border: "1px solid " + (status === "pending" ? "#FDE68A" : T.border), borderRadius: 11, padding: 14 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, flexWrap: "wrap" }}>
+                  <div>
+                    <div style={{ color: T.ink, fontSize: 14, fontWeight: 800 }}>{store?.name || request.businessName || "Unknown store"}</div>
+                    <div style={{ color: T.muted, fontSize: 11, marginTop: 3 }}>{store?.email || request.storeId} · {request.businessType || "individual"}</div>
+                  </div>
+                  <span style={{ color: status === "approved" ? "#047857" : status === "rejected" ? "#B91C1C" : "#B45309", background: status === "approved" ? "#ECFDF5" : status === "rejected" ? "#FEF2F2" : "#FFFBEB", borderRadius: 20, padding: "6px 10px", fontSize: 10.5, fontWeight: 800 }}>{status.toUpperCase()}</span>
+                </div>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 8, marginTop: 12 }}>
+                  {[["Legal name", request.legalName], ["Business name", request.businessName], ["Document", (request.documentType || "—") + (request.documentLast4 ? " · ****" + request.documentLast4 : "")]].map(([label, value]) => <div key={label} style={{ background: T.paper, border: "1px solid " + T.border, borderRadius: 8, padding: "9px 10px" }}><div style={{ color: T.muted, fontSize: 10.5 }}>{label}</div><div style={{ color: T.ink, fontSize: 12, fontWeight: 700, marginTop: 3 }}>{value || "—"}</div></div>)}
+                </div>
+                {request.note && <div style={{ color: T.ink, background: "#F8FAFC", borderRadius: 8, padding: 10, fontSize: 11.5, lineHeight: 1.45, marginTop: 10 }}><strong>Seller note:</strong> {request.note}</div>}
+                <textarea value={note} maxLength={500} onChange={(event) => updateNote(request.id, event.target.value)} placeholder="Review note (optional)" rows={2} style={{ width: "100%", marginTop: 10, padding: "9px 10px", border: "1px solid " + T.border, borderRadius: 8, fontFamily: "Inter", fontSize: 11.5, resize: "vertical" }} />
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, flexWrap: "wrap", marginTop: 9 }}>
+                  <span style={{ color: T.muted, fontSize: 10.5 }}>Submitted: {formatAdminDate(request.submittedAt || request.updatedAt)}</span>
+                  {status === "pending" && <div style={{ display: "flex", gap: 8 }}><button type="button" onClick={() => onReview(request.storeId || request.id, "rejected", note)} style={{ minHeight: 34, border: "1px solid #FECACA", borderRadius: 8, background: "#FEF2F2", color: "#B91C1C", padding: "0 11px", fontWeight: 800, fontSize: 11, cursor: "pointer" }}>Reject</button><button type="button" onClick={() => onReview(request.storeId || request.id, "approved", note)} style={{ minHeight: 34, border: "none", borderRadius: 8, background: T.mint, color: "#fff", padding: "0 11px", fontWeight: 800, fontSize: 11, cursor: "pointer" }}>Approve</button></div>}
+                </div>
+              </article>
+            );
+          })}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function SuperAdminDashboard({ stores, productsByStore = {}, globalOrders = [], storeAnalytics = {}, auditLogs = [], announcements = [], supportTickets = [], sellerKyc = [], platformVisitors, platformMaintenance, onUpdatePlatformMaintenance, onUpdateStoreMaintenance, onReviewKyc, onActivate, onBlock, onExtendTrial, onApprove, onVerifyPayment, onPublishAnnouncement, onUpdateSupportTicket, onViewAsSeller, onLogout, onResetPassword }) {
   const [activeTab, setActiveTab] = useState("overview");
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
@@ -5156,6 +5350,7 @@ function SuperAdminDashboard({ stores, productsByStore = {}, globalOrders = [], 
   const pendingApprovals = enriched.filter((store) => getStoreApprovalStatus(store) === "pending").length;
   const pendingPayments = enriched.filter((store) => store.paymentProofStatus === "pending").length;
   const pendingSupportTickets = supportTickets.filter((ticket) => !["resolved", "closed"].includes(ticket.status)).length;
+  const pendingKyc = sellerKyc.filter((request) => (request.status || "pending") === "pending").length;
 
   const globalAnalytics = useMemo(() => {
     const views = enriched.reduce((sum, store) => sum + (Number(store.visitorCount) || 0), 0);
@@ -5251,6 +5446,7 @@ function SuperAdminDashboard({ stores, productsByStore = {}, globalOrders = [], 
          <AdminTabButton active={activeTab === "support"} label="Support Tickets" count={pendingSupportTickets} onClick={() => setActiveTab("support")} />
          <AdminTabButton active={activeTab === "subscriptions"} label="Subscriptions" onClick={() => setActiveTab("subscriptions")} />
          <AdminTabButton active={activeTab === "maintenance"} label="Maintenance Mode" onClick={() => setActiveTab("maintenance")} />
+         <AdminTabButton active={activeTab === "kyc"} label="Seller KYC" count={pendingKyc} onClick={() => setActiveTab("kyc")} />
       </div>
 
       <div style={{ maxWidth: 1180, margin: "0 auto", padding: "24px 20px 80px" }}>
@@ -5263,6 +5459,7 @@ function SuperAdminDashboard({ stores, productsByStore = {}, globalOrders = [], 
            {activeTab === "support" && <SupportTicketsAdminPanel tickets={supportTickets} stores={enriched} onUpdate={onUpdateSupportTicket} />}
            {activeTab === "subscriptions" && <SubscriptionManagementPanel stores={enriched} onActivate={onActivate} onExtendTrial={onExtendTrial} />}
            {activeTab === "maintenance" && <MaintenanceModePanel stores={enriched} platformMaintenance={platformMaintenance} onUpdatePlatform={onUpdatePlatformMaintenance} onUpdateStore={onUpdateStoreMaintenance} />}
+           {activeTab === "kyc" && <SellerKycAdminPanel requests={sellerKyc} stores={enriched} onReview={onReviewKyc} />}
         </div>}
         {activeTab === "overview" && <div>
         <div className="sads-admin-stats" style={{ marginBottom: 28 }}>

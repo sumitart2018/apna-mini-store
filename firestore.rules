@@ -176,6 +176,41 @@ service cloud.firestore {
       }
     }
 
+    // Optional seller verification requests. These details stay private and
+    // are never exposed through the public stores collection.
+    match /sellerKyc/{storeId} {
+      allow read: if request.auth != null
+        && (request.auth.uid == storeId || isSuperAdmin());
+      allow create: if request.auth != null
+        && request.auth.uid == storeId
+        && request.resource.data.keys().hasOnly([
+          "storeId", "legalName", "businessName", "businessType",
+          "documentType", "documentLast4", "note", "status",
+          "submittedAt", "updatedAt"
+        ])
+        && request.resource.data.storeId == storeId
+        && request.resource.data.status == "pending"
+        && request.resource.data.legalName is string
+        && request.resource.data.legalName.size() > 0
+        && request.resource.data.businessName is string
+        && request.resource.data.businessName.size() > 0
+        && request.resource.data.documentType is string
+        && request.resource.data.documentType.size() > 0;
+      allow update: if request.auth != null
+        && request.auth.uid == storeId
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          "legalName", "businessName", "businessType", "documentType",
+          "documentLast4", "note", "status", "submittedAt", "updatedAt"
+        ])
+        && request.resource.data.status == "pending";
+      allow update: if isSuperAdmin()
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          "status", "reviewNote", "reviewedBy", "reviewedAt", "updatedAt"
+        ])
+        && request.resource.data.status in ["approved", "rejected"];
+      allow delete: if false;
+    }
+
     // Maintenance settings are public-read so logged-out visitors can receive
     // a clear maintenance screen. Only the Super Admin may change them.
     match /platformSettings/{settingId} {
