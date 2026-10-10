@@ -173,6 +173,29 @@ export async function createAnnouncement({ title, message, kind = "info" }, admi
   });
 }
 
+// Support tickets are deliberately separate from store profiles and orders.
+// Sellers can create/read only their own tickets; the Super Admin can read and
+// update them without ever receiving or storing a seller password.
+export async function createSupportTicket({ storeId, subject, message, priority = "normal" }) {
+  await addDoc(collection(db, "supportTickets"), {
+    storeId,
+    subject: subject.trim(),
+    message: message.trim(),
+    priority,
+    status: "open",
+    adminReply: "",
+    createdAt: serverTimestamp(),
+    updatedAt: serverTimestamp(),
+  });
+}
+
+export async function updateSupportTicket(ticketId, patch) {
+  await updateDoc(doc(db, "supportTickets", ticketId), {
+    ...patch,
+    updatedAt: serverTimestamp(),
+  });
+}
+
 // ---------- Real-time listeners ----------
 // Each returns an unsubscribe function — call it in a useEffect cleanup.
 // Each also takes an optional onError callback — without it, a permission
@@ -264,6 +287,31 @@ export function watchAnnouncements(onChange, onError) {
     query(collection(db, "announcements"), fsOrderBy("createdAt", "desc"), fsLimit(20)),
     (snap) => onChange(snap.docs.map((d) => ({ id: d.id, ...d.data() }))),
     (err) => { console.error("watchAnnouncements failed:", err); if (onError) onError(err); }
+  );
+}
+
+function mapSupportTickets(snap) {
+  return snap.docs
+    .map((ticketDoc) => ({ id: ticketDoc.id, ...ticketDoc.data() }))
+    .sort((a, b) => {
+      const time = (value) => value?.toMillis ? value.toMillis() : (value ? new Date(value).getTime() : 0);
+      return time(b.updatedAt || b.createdAt) - time(a.updatedAt || a.createdAt);
+    });
+}
+
+export function watchSupportTicketsForStore(storeId, onChange, onError) {
+  return onSnapshot(
+    query(collection(db, "supportTickets"), fsWhere("storeId", "==", storeId), fsLimit(50)),
+    (snap) => onChange(mapSupportTickets(snap)),
+    (err) => { console.error("watchSupportTicketsForStore failed:", err); if (onError) onError(err); }
+  );
+}
+
+export function watchAllSupportTickets(onChange, onError) {
+  return onSnapshot(
+    query(collection(db, "supportTickets"), fsLimit(100)),
+    (snap) => onChange(mapSupportTickets(snap)),
+    (err) => { console.error("watchAllSupportTickets failed:", err); if (onError) onError(err); }
   );
 }
 

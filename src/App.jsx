@@ -1,10 +1,10 @@
 import React, { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { ShoppingCart, MessageCircle, Palette, Package, QrCode, BarChart3, ShieldCheck, Smartphone, Users, Boxes, Search, Zap, Menu, X, Facebook, Instagram, Youtube, Heart, Truck, Headphones, User, Phone, MapPin, FileText, Mail, Twitter, ShoppingBag, Shirt, Coffee, KeyRound, Grid3x3, Share2, SlidersHorizontal, Home, Award, Star, ExternalLink, Globe, UtensilsCrossed, Moon, Sun, Sparkles, TrendingUp, Flame, Bell, LogOut, Filter, ArrowUpDown, ChevronLeft, ChevronRight, Store, Ban, CalendarDays, Clock, Hash, TrendingDown, Copy, Lock, Eye, EyeOff, Loader2, Download, CheckCircle2, ClipboardList, Receipt, Activity } from "lucide-react";
 import {
-  watchAllStores, watchAllProducts, watchOrdersForStore, watchAllOrders, watchAllStoreAnalytics, watchAdminAuditLogs, watchAnnouncements, watchPlatformAnalytics, watchStoreAnalytics, watchAuthState,
+  watchAllStores, watchAllProducts, watchOrdersForStore, watchAllOrders, watchAllStoreAnalytics, watchAdminAuditLogs, watchAnnouncements, watchAllSupportTickets, watchSupportTicketsForStore, watchPlatformAnalytics, watchStoreAnalytics, watchAuthState,
   signUpSeller, signInSeller, signOutUser, friendlyAuthError,
   updateStoreProfile, addStoreCategory, removeStoreCategory,
-  setStorePlan, setStoreBlocked, setTrialStartedAt, setStoreApproval, setPaymentVerification, writeAdminAuditLog, createAnnouncement,
+  setStorePlan, setStoreBlocked, setTrialStartedAt, setStoreApproval, setPaymentVerification, writeAdminAuditLog, createAnnouncement, createSupportTicket, updateSupportTicket,
   createProduct, editProduct, removeProduct,
   createOrder, setOrderStatus, setOrderPaymentStatus, uploadStoreImage, resetSellerPassword, signInWithGoogle,
   trackPlatformVisit, trackStoreVisit, trackStoreAnalytics, watchReviewsForStore, watchApprovedReviews,
@@ -192,6 +192,25 @@ function getStoreApprovalStatus(store) {
   // Existing stores were created before approval workflow was introduced;
   // treating a missing field as approved keeps current live stores working.
   return store?.approvalStatus || "approved";
+}
+
+function getSellerHealthScore(store, storeAnalytics = {}) {
+  const products = store?.products || [];
+  const orders = store?.orders || [];
+  const profileDone = Boolean(store?.name?.trim() && store?.whatsapp?.trim() && (store?.tagline?.trim() || store?.about?.trim() || store?.logoImg || store?.bannerImg));
+  const catalogueDone = products.length > 0;
+  const paymentDone = Boolean(store?.upiId?.trim() || store?.paymentMethod);
+  const liveDone = getStoreApprovalStatus(store) === "approved" && ["active", "trial"].includes(getStoreStatus(store).status);
+  const activityDone = Number(store?.visitorCount) > 0 || orders.length > 0 || Number(storeAnalytics.productViews) > 0;
+  const checks = [
+    { label: "Profile", done: profileDone, weight: 25 },
+    { label: "Catalogue", done: catalogueDone, weight: 25 },
+    { label: "Payment", done: paymentDone, weight: 20 },
+    { label: "Live store", done: liveDone, weight: 20 },
+    { label: "Activity", done: activityDone, weight: 10 },
+  ];
+  const score = checks.reduce((total, check) => total + (check.done ? check.weight : 0), 0);
+  return { score, checks };
 }
 
 function storeDateValue(value) {
@@ -542,11 +561,13 @@ export default function App() {
   const [adminAnalyticsByStore, setAdminAnalyticsByStore] = useState({});
   const [adminAuditLogs, setAdminAuditLogs] = useState([]);
   const [announcements, setAnnouncements] = useState([]);
+  const [supportTickets, setSupportTickets] = useState([]);
   const [reviewsByStore, setReviewsByStore] = useState({});
   const [platformVisitors, setPlatformVisitors] = useState(0);
   // undefined = auth state not yet resolved, null = logged out, object = logged in
   const [authUser, setAuthUser] = useState(undefined);
   const [view, setView] = useState("directory");
+  const [adminPreviewStoreId, setAdminPreviewStoreId] = useState(null);
   const [activeStoreId, setActiveStoreId] = useState(null);
   const [toast, setToast] = useState("");
   const [selectedTheme, setSelectedTheme] = useState("classic");
@@ -629,6 +650,7 @@ export default function App() {
       setAdminAnalyticsByStore({});
       setAdminAuditLogs([]);
       setAnnouncements([]);
+      setSupportTickets([]);
       return;
     }
     const unsubAnnouncements = watchAnnouncements(setAnnouncements, (err) => console.warn("Announcements load nahi hue:", err));
@@ -636,7 +658,8 @@ export default function App() {
       const unsubAdminOrders = watchAllOrders(setAdminOrders, (err) => console.warn("Global orders load nahi hue:", err));
       const unsubAdminAnalytics = watchAllStoreAnalytics(setAdminAnalyticsByStore, (err) => console.warn("Global analytics load nahi hua:", err));
       const unsubAuditLogs = watchAdminAuditLogs(setAdminAuditLogs, (err) => console.warn("Audit logs load nahi hue:", err));
-      return () => { unsubAnnouncements(); unsubAdminOrders(); unsubAdminAnalytics(); unsubAuditLogs(); };
+      const unsubSupport = watchAllSupportTickets(setSupportTickets, (err) => console.warn("Support tickets load nahi hue:", err));
+      return () => { unsubAnnouncements(); unsubAdminOrders(); unsubAdminAnalytics(); unsubAuditLogs(); unsubSupport(); };
     }
     const unsubOrders = watchOrdersForStore(authUser.uid, (orders) => {
       setOrdersByStore({ [authUser.uid]: orders });
@@ -647,7 +670,8 @@ export default function App() {
     const unsubAnalytics = watchStoreAnalytics(authUser.uid, (analytics) => {
       setAnalyticsByStore({ [authUser.uid]: analytics });
     }, (err) => { console.warn("Analytics load nahi hua:", err); });
-    return () => { unsubAnnouncements(); unsubOrders(); unsubReviews(); unsubAnalytics(); };
+    const unsubSupport = watchSupportTicketsForStore(authUser.uid, setSupportTickets, (err) => { console.warn("Support tickets load nahi hue:", err); });
+    return () => { unsubAnnouncements(); unsubOrders(); unsubReviews(); unsubAnalytics(); unsubSupport(); };
   }, [authUser, isSuperAdmin]);
 
   // On first load, if the browser already has a persisted login, jump
@@ -732,6 +756,12 @@ export default function App() {
     canonical.href = url;
   }, [view, activeStore]);
   const ownerStore = stores.find((s) => s.id === session);
+  const adminPreviewStore = adminPreviewStoreId
+    ? stores.find((s) => s.id === adminPreviewStoreId)
+    : null;
+  const securePreviewStore = adminPreviewStore
+    ? { ...adminPreviewStore, products: productsByStore[adminPreviewStore.id] || [], orders: adminOrders.filter((order) => order.storeId === adminPreviewStore.id) }
+    : null;
 
   // Real Firebase Authentication — see firestoreApi.js. Passwords are never
   // stored or compared by this app any more; Firebase handles that securely
@@ -1090,6 +1120,33 @@ export default function App() {
       return false;
     }
   };
+  const submitSupportTicket = async ({ subject, message, priority }) => {
+    try {
+      await createSupportTicket({ storeId: session, subject, message, priority });
+      flash("Support ticket submit ho gaya — admin jaldi reply karega");
+      return true;
+    } catch (e) {
+      flash("Support ticket submit nahi hua — dobara try karo");
+      return false;
+    }
+  };
+  const changeSupportTicket = async (ticketId, patch) => {
+    try {
+      await updateSupportTicket(ticketId, patch);
+      recordAdminAction("support_ticket_updated", "", { ticketId, status: patch.status, priority: patch.priority });
+      flash("Support ticket update ho gaya");
+      return true;
+    } catch (e) {
+      flash("Support ticket update nahi hua — dobara try karo");
+      return false;
+    }
+  };
+  const openSecureSellerView = (storeId) => {
+    if (!isSuperAdmin) return;
+    recordAdminAction("secure_seller_view_opened", storeId, { readOnly: true });
+    setAdminPreviewStoreId(storeId);
+    setView("admin-preview");
+  };
   const submitPaymentProof = async (payload) => {
     try {
       await updateStoreProfile(session, {
@@ -1147,7 +1204,7 @@ export default function App() {
     <div style={{ background: T.paper, minHeight: "100vh", fontFamily: "Inter" }}>
       <style>{`* { box-sizing: border-box; } ::placeholder { color: ${T.ink}55; }`}</style>
 
-      {view !== "storefront" && view !== "directory" && view !== "superadmin" && (
+      {view !== "storefront" && view !== "directory" && view !== "superadmin" && view !== "admin-preview" && (
         <TopBar onHome={() => setView("directory")} session={session} onDashboard={() => setView("dashboard")} onLogout={() => { signOutUser(); setView("directory"); }} isSuperAdmin={isSuperAdmin} onSuperAdminLogout={() => { signOutUser(); setView("directory"); }} />
       )}
 
@@ -1162,10 +1219,13 @@ export default function App() {
 )}
       {view === "superadmin-login" && <SuperAdminLogin onSubmit={superAdminLogin} onBack={() => setView("directory")} />}
       {view === "superadmin" && isSuperAdmin && (
-        <SuperAdminDashboard stores={stores} productsByStore={productsByStore} globalOrders={adminOrders} storeAnalytics={adminAnalyticsByStore} auditLogs={adminAuditLogs} announcements={announcements} platformVisitors={platformVisitors} onActivate={activatePlan} onBlock={toggleBlockStore} onExtendTrial={extendTrial} onApprove={updateStoreApproval} onVerifyPayment={updatePaymentVerification} onPublishAnnouncement={publishAnnouncement} onLogout={() => { signOutUser(); setView("directory"); }} onResetPassword={sendResetEmail} />
+        <SuperAdminDashboard stores={stores} productsByStore={productsByStore} globalOrders={adminOrders} storeAnalytics={adminAnalyticsByStore} auditLogs={adminAuditLogs} announcements={announcements} supportTickets={supportTickets} platformVisitors={platformVisitors} onActivate={activatePlan} onBlock={toggleBlockStore} onExtendTrial={extendTrial} onApprove={updateStoreApproval} onVerifyPayment={updatePaymentVerification} onPublishAnnouncement={publishAnnouncement} onUpdateSupportTicket={changeSupportTicket} onViewAsSeller={openSecureSellerView} onLogout={() => { signOutUser(); setView("directory"); }} onResetPassword={sendResetEmail} />
+      )}
+      {view === "admin-preview" && isSuperAdmin && securePreviewStore && (
+        <SecureSellerView store={securePreviewStore} analytics={adminAnalyticsByStore[securePreviewStore.id] || {}} supportTickets={supportTickets.filter((ticket) => ticket.storeId === securePreviewStore.id)} onBack={() => { recordAdminAction("secure_seller_view_closed", securePreviewStore.id, { readOnly: true }); setAdminPreviewStoreId(null); setView("superadmin"); }} />
       )}
       {view === "dashboard" && ownerStore && (
-        <Dashboard store={ownerStore} storeAnalytics={analyticsByStore[ownerStore.id] || {}} announcements={announcements} onAddProduct={addProduct} onUpdateProduct={updateProduct} onDeleteProduct={deleteProduct} onAddCategory={addCategory} onDeleteCategory={deleteCategory} onUpdateStore={updateOwnerStore} onSubmitPayment={submitPaymentProof} onViewStore={() => openStore(ownerStore.id)} onUpdateOrderStatus={updateOrderStatus} onUpdateOrderPaymentStatus={updateOrderPaymentStatus} onUpdateReviewStatus={updateReviewStatus} onDeleteReview={removeReview} saveState={saveState} />
+        <Dashboard store={ownerStore} storeAnalytics={analyticsByStore[ownerStore.id] || {}} announcements={announcements} supportTickets={supportTickets} onCreateSupportTicket={submitSupportTicket} onAddProduct={addProduct} onUpdateProduct={updateProduct} onDeleteProduct={deleteProduct} onAddCategory={addCategory} onDeleteCategory={deleteCategory} onUpdateStore={updateOwnerStore} onSubmitPayment={submitPaymentProof} onViewStore={() => openStore(ownerStore.id)} onUpdateOrderStatus={updateOrderStatus} onUpdateOrderPaymentStatus={updateOrderPaymentStatus} onUpdateReviewStatus={updateReviewStatus} onDeleteReview={removeReview} saveState={saveState} />
       )}
       {view === "storefront" && activeStore && (
         <Storefront store={activeStore} cart={cart} wishlist={wishlist} onBack={() => {
@@ -2210,7 +2270,7 @@ function LoginForm({ onSubmit, onSignup, onGoogleLogin }) {
     Forgot Password?
   </button>
 </div>
-      <p style={{ fontSize: 12, color: T.ink, opacity: 0.6, marginTop: -6 }}>Demo: owner@demo.com / demo123 (Yuvi Fashion sample store)</p>
+      <p style={{ fontSize: 12, color: T.ink, opacity: 0.6, marginTop: -6 }}>Sample store ke liye apna registered email aur password use karo.</p>
       <Button
   style={{ width: "100%" }}
   disabled={loading}
@@ -2347,6 +2407,69 @@ function SellerAnnouncements({ announcements = [] }) {
   );
 }
 
+function SellerHealthBadge({ store, storeAnalytics = {}, compact = false }) {
+  const { score } = getSellerHealthScore(store, storeAnalytics);
+  const tone = score >= 80 ? { color: "#047857", background: "#ECFDF5", border: "#A7F3D0", label: "Healthy" } : score >= 50 ? { color: "#92400E", background: "#FFFBEB", border: "#FDE68A", label: "Needs attention" } : { color: "#B91C1C", background: "#FEF2F2", border: "#FECACA", label: "At risk" };
+  return (
+    <div aria-label={`Seller Health Score ${score} out of 100`} style={{ display: "inline-flex", alignItems: "center", gap: 7, color: tone.color, background: tone.background, border: `1px solid ${tone.border}`, borderRadius: 20, padding: compact ? "5px 9px" : "7px 11px", fontSize: compact ? 11 : 12, fontWeight: 800 }}>
+      <Heart size={compact ? 12 : 14} fill="currentColor" />
+      <span>Health {score}/100</span>
+      {!compact && <span style={{ fontWeight: 700, opacity: 0.8 }}>· {tone.label}</span>}
+    </div>
+  );
+}
+
+function SupportTicketStatus({ status }) {
+  const labels = { open: "Open", in_progress: "In progress", resolved: "Resolved", closed: "Closed" };
+  const colors = { open: ["#FFF7ED", "#9A3412"], in_progress: ["#EFF6FF", "#1D4ED8"], resolved: ["#ECFDF5", "#047857"], closed: ["#F3F4F6", "#4B5563"] };
+  const [background, color] = colors[status] || colors.open;
+  return <span style={{ color, background, borderRadius: 20, padding: "4px 8px", fontSize: 10.5, fontWeight: 800 }}>{labels[status] || "Open"}</span>;
+}
+
+function SupportTicketsSellerPanel({ tickets = [], onCreate }) {
+  const [subject, setSubject] = useState("");
+  const [message, setMessage] = useState("");
+  const [priority, setPriority] = useState("normal");
+  const [error, setError] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  const submit = async (event) => {
+    event.preventDefault();
+    if (subject.trim().length < 3 || message.trim().length < 5) {
+      setError("Subject कम से कम 3 और message कम से कम 5 characters का होना चाहिए");
+      return;
+    }
+    setError("");
+    setSaving(true);
+    try {
+      const created = await onCreate({ subject: subject.trim(), message: message.trim(), priority });
+      if (created) { setSubject(""); setMessage(""); setPriority("normal"); }
+    } finally { setSaving(false); }
+  };
+
+  return (
+    <section aria-labelledby="seller-support-title" style={{ background: T.cream, border: `1px solid ${T.border}`, borderRadius: 14, padding: 18 }}>
+      <div style={{ display: "flex", alignItems: "flex-start", gap: 10, marginBottom: 16 }}>
+        <div style={{ width: 38, height: 38, borderRadius: 10, background: `${T.mint}12`, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}><Headphones size={18} color={T.mint} /></div>
+        <div><h2 id="seller-support-title" style={{ margin: 0, fontFamily: "Inter", fontSize: 19, color: T.ink }}>🎫 Support Tickets</h2><p style={{ margin: "4px 0 0", color: T.muted, fontSize: 12 }}>Platform help ke liye ticket bhejo aur admin ka reply yahin dekho.</p></div>
+      </div>
+      <form onSubmit={submit} style={{ background: T.paper, border: `1px solid ${T.border}`, borderRadius: 11, padding: 14 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) 150px", gap: 10 }}>
+          <label style={{ display: "block" }}><span style={{ display: "block", color: T.muted, fontSize: 11, fontWeight: 700, marginBottom: 5 }}>Subject</span><input value={subject} onChange={(event) => setSubject(event.target.value)} maxLength={120} placeholder="Jaise: Payment setting mein help chahiye" style={{ width: "100%", minHeight: 42, padding: "0 12px", borderRadius: 8, border: `1px solid ${T.border}`, fontFamily: "Inter", boxSizing: "border-box" }} /></label>
+          <label style={{ display: "block" }}><span style={{ display: "block", color: T.muted, fontSize: 11, fontWeight: 700, marginBottom: 5 }}>Priority</span><select value={priority} onChange={(event) => setPriority(event.target.value)} style={{ width: "100%", minHeight: 42, padding: "0 10px", borderRadius: 8, border: `1px solid ${T.border}`, fontFamily: "Inter", background: "#fff" }}><option value="normal">Normal</option><option value="high">High</option><option value="urgent">Urgent</option></select></label>
+        </div>
+        <label style={{ display: "block", marginTop: 10 }}><span style={{ display: "block", color: T.muted, fontSize: 11, fontWeight: 700, marginBottom: 5 }}>Message</span><textarea value={message} onChange={(event) => setMessage(event.target.value)} maxLength={1200} rows={4} placeholder="Problem ko detail mein likho..." style={{ width: "100%", resize: "vertical", padding: "10px 12px", borderRadius: 8, border: `1px solid ${T.border}`, fontFamily: "Inter", fontSize: 13, boxSizing: "border-box" }} /></label>
+        {error && <div role="alert" style={{ color: "#B91C1C", background: "#FEF2F2", borderRadius: 8, padding: 9, fontSize: 12, marginTop: 10 }}>{error}</div>}
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap", marginTop: 12 }}><span style={{ color: T.muted, fontSize: 11 }}>Password, OTP ya payment secret message mein kabhi mat bhejna.</span><Button type="submit" variant="mint" disabled={saving}>{saving ? "Submitting..." : "🎫 Ticket Submit Karo"}</Button></div>
+      </form>
+      <div style={{ marginTop: 20, borderTop: `1px solid ${T.border}`, paddingTop: 14 }}>
+        <div style={{ color: T.ink, fontSize: 14, fontWeight: 800, marginBottom: 10 }}>Your tickets</div>
+        {tickets.length === 0 ? <div style={{ color: T.muted, background: T.paper, borderRadius: 10, padding: 18, fontSize: 12 }}>Abhi koi support ticket nahi hai.</div> : <div style={{ display: "grid", gap: 9 }}>{tickets.map((ticket) => <article key={ticket.id} style={{ background: T.paper, border: `1px solid ${T.border}`, borderRadius: 10, padding: 12 }}><div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 10 }}><div style={{ minWidth: 0 }}><strong style={{ color: T.ink, fontSize: 13 }}>{ticket.subject}</strong><div style={{ color: T.muted, fontSize: 10.5, marginTop: 3 }}>{ticket.priority.toUpperCase()} · {formatAdminDate(ticket.updatedAt || ticket.createdAt)}</div></div><SupportTicketStatus status={ticket.status} /></div><p style={{ color: T.ink, fontSize: 12, lineHeight: 1.5, whiteSpace: "pre-wrap", margin: "9px 0 0" }}>{ticket.message}</p>{ticket.adminReply && <div style={{ marginTop: 10, background: "#ECFDF5", border: "1px solid #A7F3D0", borderRadius: 8, padding: 10 }}><div style={{ color: "#047857", fontSize: 11, fontWeight: 800 }}>Admin reply</div><div style={{ color: T.ink, fontSize: 12, lineHeight: 1.5, whiteSpace: "pre-wrap", marginTop: 4 }}>{ticket.adminReply}</div></div>}</article>)}</div>}
+      </div>
+    </section>
+  );
+}
+
 function AdvancedAnalyticsPanel({ metrics }) {
   const funnel = [
     { label: "Store views", value: metrics.views, color: T.mint },
@@ -2413,7 +2536,7 @@ function AdvancedAnalyticsPanel({ metrics }) {
   );
 }
 
-function Dashboard({ store, storeAnalytics = {}, announcements = [], onAddProduct, onUpdateProduct, onDeleteProduct, onAddCategory, onDeleteCategory, onUpdateStore, onSubmitPayment, onViewStore, onUpdateOrderStatus, onUpdateOrderPaymentStatus, onUpdateReviewStatus, onDeleteReview, saveState }) {
+function Dashboard({ store, storeAnalytics = {}, announcements = [], supportTickets = [], onCreateSupportTicket, onAddProduct, onUpdateProduct, onDeleteProduct, onAddCategory, onDeleteCategory, onUpdateStore, onSubmitPayment, onViewStore, onUpdateOrderStatus, onUpdateOrderPaymentStatus, onUpdateReviewStatus, onDeleteReview, saveState }) {
   const [tab, setTab] = useState("products");
   const orders = store.orders || [];
   const reviews = store.reviews || [];
@@ -2588,14 +2711,16 @@ function Dashboard({ store, storeAnalytics = {}, announcements = [], onAddProduc
       <SellerAnnouncements announcements={announcements} />
 
       <div style={{ display: "flex", gap: 8, marginBottom: 20, flexWrap: "wrap" }}>
-        {["products", "categories", "orders", "analytics", "reviews", "billing", "profile", "settings"].map((t) => (
+        {["products", "categories", "orders", "analytics", "reviews", "support", "billing", "profile", "settings"].map((t) => (
           <button key={t} onClick={() => setTab(t)} style={{ padding: "10px 18px", minHeight: 44, borderRadius: 8, border: `1px solid ${T.border}`, background: tab === t ? T.marigold : "transparent", fontFamily: "Inter", fontWeight: 700, cursor: "pointer", color: tab === t ? "#fff" : T.ink, textTransform: "capitalize", position: "relative" }}>
-            {t === "products" ? "Products" : t === "categories" ? "Categories" : t === "orders" ? `Orders${orders.length ? ` (${orders.length})` : ""}` : t === "analytics" ? "Analytics" : t === "reviews" ? `Reviews${reviews.filter((review) => review.status === "pending").length ? ` (${reviews.filter((review) => review.status === "pending").length})` : ""}` : t === "billing" ? "Billing" : t === "profile" ? "Store Profile" : "Cart Settings"}
+            {t === "products" ? "Products" : t === "categories" ? "Categories" : t === "orders" ? `Orders${orders.length ? ` (${orders.length})` : ""}` : t === "analytics" ? "Analytics" : t === "reviews" ? `Reviews${reviews.filter((review) => review.status === "pending").length ? ` (${reviews.filter((review) => review.status === "pending").length})` : ""}` : t === "support" ? `Support${supportTickets.filter((ticket) => !["resolved", "closed"].includes(ticket.status)).length ? ` (${supportTickets.filter((ticket) => !["resolved", "closed"].includes(ticket.status)).length})` : ""}` : t === "billing" ? "Billing" : t === "profile" ? "Store Profile" : "Cart Settings"}
           </button>
         ))}
       </div>
 
       {tab === "analytics" && <AdvancedAnalyticsPanel metrics={advancedAnalytics} />}
+
+      {tab === "support" && <SupportTicketsSellerPanel tickets={supportTickets} onCreate={onCreateSupportTicket} />}
 
       {tab === "categories" && (
         <div>
@@ -4665,7 +4790,88 @@ function BroadcastNotificationsPanel({ announcements = [], onPublish }) {
   );
 }
 
-function SuperAdminDashboard({ stores, productsByStore = {}, globalOrders = [], storeAnalytics = {}, auditLogs = [], announcements = [], platformVisitors, onActivate, onBlock, onExtendTrial, onApprove, onVerifyPayment, onPublishAnnouncement, onLogout, onResetPassword }) {
+function SupportTicketAdminCard({ ticket, store, onUpdate }) {
+  const [status, setStatus] = useState(ticket.status || "open");
+  const [priority, setPriority] = useState(ticket.priority || "normal");
+  const [reply, setReply] = useState(ticket.adminReply || "");
+  const [saving, setSaving] = useState(false);
+  const save = async () => {
+    setSaving(true);
+    try { await onUpdate(ticket.id, { status, priority, adminReply: reply.trim() }); } finally { setSaving(false); }
+  };
+  return (
+    <article style={{ background: T.paper, border: `1px solid ${T.border}`, borderRadius: 11, padding: 14, marginBottom: 10 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, flexWrap: "wrap" }}>
+        <div style={{ minWidth: 0 }}><strong style={{ color: T.ink, fontSize: 14 }}>{ticket.subject}</strong><div style={{ color: T.muted, fontSize: 11.5, marginTop: 4 }}>{store?.name || "Unknown store"} · {store?.email || ticket.storeId}</div><div style={{ color: T.muted, fontSize: 10.5, marginTop: 3 }}>{ticket.priority.toUpperCase()} · {formatAdminDate(ticket.updatedAt || ticket.createdAt)}</div></div>
+        <SupportTicketStatus status={ticket.status} />
+      </div>
+      <div style={{ background: "#fff", border: `1px solid ${T.border}`, borderRadius: 8, padding: 10, marginTop: 11, color: T.ink, fontSize: 12.5, lineHeight: 1.5, whiteSpace: "pre-wrap" }}>{ticket.message}</div>
+      <div style={{ display: "grid", gridTemplateColumns: "150px 150px", gap: 9, marginTop: 12 }}>
+        <label style={{ display: "grid", gap: 4, color: T.muted, fontSize: 11, fontWeight: 700 }}>Status<select value={status} onChange={(event) => setStatus(event.target.value)} style={{ minHeight: 38, borderRadius: 7, border: `1px solid ${T.border}`, padding: "0 8px", background: "#fff", fontFamily: "Inter" }}><option value="open">Open</option><option value="in_progress">In progress</option><option value="resolved">Resolved</option><option value="closed">Closed</option></select></label>
+        <label style={{ display: "grid", gap: 4, color: T.muted, fontSize: 11, fontWeight: 700 }}>Priority<select value={priority} onChange={(event) => setPriority(event.target.value)} style={{ minHeight: 38, borderRadius: 7, border: `1px solid ${T.border}`, padding: "0 8px", background: "#fff", fontFamily: "Inter" }}><option value="normal">Normal</option><option value="high">High</option><option value="urgent">Urgent</option></select></label>
+      </div>
+      <label style={{ display: "block", marginTop: 10, color: T.muted, fontSize: 11, fontWeight: 700 }}>Admin reply<textarea value={reply} onChange={(event) => setReply(event.target.value)} maxLength={1200} rows={3} placeholder="Seller ko reply likho..." style={{ display: "block", width: "100%", resize: "vertical", marginTop: 4, padding: "9px 10px", borderRadius: 7, border: `1px solid ${T.border}`, fontFamily: "Inter", fontSize: 12.5, boxSizing: "border-box" }} /></label>
+      <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 9 }}><Button variant="mint" disabled={saving} onClick={save}>{saving ? "Saving..." : "Save Ticket"}</Button></div>
+    </article>
+  );
+}
+
+function SupportTicketsAdminPanel({ tickets = [], stores = [], onUpdate }) {
+  const [filter, setFilter] = useState("open");
+  const storeMap = useMemo(() => Object.fromEntries(stores.map((store) => [store.id, store])), [stores]);
+  const visible = tickets.filter((ticket) => filter === "all" || (filter === "open" ? !["resolved", "closed"].includes(ticket.status) : ticket.status === filter));
+  const openCount = tickets.filter((ticket) => !["resolved", "closed"].includes(ticket.status)).length;
+  return (
+    <section aria-labelledby="admin-support-title" style={{ background: T.cream, border: `1px solid ${T.border}`, borderRadius: 14, padding: 18 }}>
+      <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12, flexWrap: "wrap", marginBottom: 16 }}><div><h2 id="admin-support-title" style={{ margin: 0, fontFamily: "Inter", fontSize: 19, color: T.ink }}>🎫 Support Tickets</h2><p style={{ color: T.muted, fontSize: 12, margin: "4px 0 0" }}>Sellers ki help requests ko status, priority aur reply ke saath manage karo.</p></div><div style={{ display: "flex", alignItems: "center", gap: 8 }}><strong style={{ color: "#B91C1C", background: "#FEF2F2", borderRadius: 20, padding: "6px 10px", fontSize: 11 }}>{openCount} open</strong><select value={filter} onChange={(event) => setFilter(event.target.value)} style={{ minHeight: 34, border: `1px solid ${T.border}`, borderRadius: 8, padding: "0 8px", background: "#fff", fontFamily: "Inter", fontSize: 12 }}><option value="open">Open</option><option value="all">All</option><option value="in_progress">In progress</option><option value="resolved">Resolved</option><option value="closed">Closed</option></select></div></div>
+      {visible.length === 0 ? <div style={{ background: T.paper, border: `1px dashed ${T.border}`, borderRadius: 10, padding: 30, textAlign: "center", color: T.muted, fontSize: 13 }}>{filter === "open" ? "Abhi koi open support ticket nahi hai." : "Is filter mein ticket nahi hai."}</div> : visible.map((ticket) => <SupportTicketAdminCard key={ticket.id} ticket={ticket} store={storeMap[ticket.storeId]} onUpdate={onUpdate} />)}
+    </section>
+  );
+}
+
+function SubscriptionManagementPanel({ stores = [], onActivate, onExtendTrial }) {
+  const enriched = stores.map((store) => ({ store, status: getStoreStatus(store) }));
+  const active = enriched.filter(({ status }) => status.status === "active");
+  const trial = enriched.filter(({ status }) => status.status === "trial");
+  const expiring = enriched.filter(({ status }) => ["active", "trial"].includes(status.status) && status.daysLeft <= 7).sort((a, b) => a.status.daysLeft - b.status.daysLeft);
+  const expired = enriched.filter(({ status }) => status.status === "expired");
+  const revenue = active.reduce((sum, { store }) => sum + (PLAN_PRICES[store.plan]?.price || 0), 0);
+  return (
+    <section aria-labelledby="subscription-management-title" style={{ background: T.cream, border: `1px solid ${T.border}`, borderRadius: 14, padding: 18 }}>
+      <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12, flexWrap: "wrap", marginBottom: 16 }}><div><h2 id="subscription-management-title" style={{ margin: 0, fontFamily: "Inter", fontSize: 19, color: T.ink }}>💳 Subscription Management</h2><p style={{ color: T.muted, fontSize: 12, margin: "4px 0 0" }}>Plans, trial expiry aur renewal actions ek jagah. Card details/password yahan kabhi store nahi hote.</p></div><span style={{ color: T.mint, background: `${T.mint}12`, borderRadius: 20, padding: "6px 10px", fontSize: 11, fontWeight: 800 }}>Owner-managed</span></div>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(135px, 1fr))", gap: 10, marginBottom: 20 }}>
+        {[{ label: "Active plans", value: active.length, tone: T.mint }, { label: "Free trials", value: trial.length, tone: "#D97706" }, { label: "Expiring ≤ 7 days", value: expiring.length, tone: "#DC2626" }, { label: "Expired", value: expired.length, tone: "#6B7280" }, { label: "Plan revenue", value: `₹${revenue.toLocaleString("en-IN")}`, tone: "#2563EB" }].map((card) => <div key={card.label} style={{ background: T.paper, border: `1px solid ${T.border}`, borderRadius: 10, padding: "12px 13px" }}><div style={{ color: T.muted, fontSize: 11, fontWeight: 700 }}>{card.label}</div><div style={{ color: card.tone, fontSize: 21, fontWeight: 800, marginTop: 6 }}>{card.value}</div></div>)}
+      </div>
+      <div style={{ color: T.ink, fontSize: 14, fontWeight: 800, marginBottom: 10 }}>Renewal watchlist</div>
+      {expiring.length === 0 ? <div style={{ background: T.paper, border: `1px dashed ${T.border}`, borderRadius: 10, padding: 22, color: T.muted, fontSize: 12 }}>Abhi koi plan/trial 7 din ke andar expire nahi ho raha.</div> : expiring.map(({ store, status }) => <div key={store.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap", background: T.paper, border: `1px solid ${T.border}`, borderRadius: 10, padding: "11px 12px", marginBottom: 8 }}><div><strong style={{ color: T.ink, fontSize: 13 }}>{store.name}</strong><div style={{ color: status.daysLeft <= 3 ? "#B91C1C" : T.muted, fontSize: 11, marginTop: 3 }}>{status.status === "trial" ? "Free trial" : PLAN_PRICES[store.plan]?.label || "Paid plan"} · {status.daysLeft} din baaki</div></div><div style={{ display: "flex", gap: 7, flexWrap: "wrap" }}><button type="button" onClick={() => onExtendTrial(store.id, 7)} style={{ minHeight: 34, border: `1px solid ${T.border}`, borderRadius: 7, background: "#fff", color: T.ink, padding: "0 9px", fontSize: 11, fontWeight: 800, cursor: "pointer" }}>+7 Days</button>{Object.entries(PLAN_PRICES).map(([plan, info]) => <button key={plan} type="button" onClick={() => onActivate(store.id, plan)} style={{ minHeight: 34, border: "none", borderRadius: 7, background: plan === "yearly" ? T.ink : T.mint, color: "#fff", padding: "0 9px", fontSize: 11, fontWeight: 800, cursor: "pointer" }}>{info.label}</button>)}</div></div>)}
+    </section>
+  );
+}
+
+function SecureSellerView({ store, analytics = {}, supportTickets = [], onBack }) {
+  const orders = store.orders || [];
+  const revenue = orders.filter((order) => order.status !== "Cancelled").reduce((sum, order) => sum + (Number(order.total) || 0), 0);
+  const cards = [
+    { label: "Store views", value: Number(store.visitorCount) || 0, icon: "👁️", tone: T.mint },
+    { label: "Products", value: (store.products || []).length, icon: "📦", tone: "#2563EB" },
+    { label: "Orders", value: orders.length, icon: "🧾", tone: T.magenta },
+    { label: "Revenue", value: `₹${revenue.toLocaleString("en-IN", { maximumFractionDigits: 0 })}`, icon: "💰", tone: "#15803D" },
+  ];
+  return (
+    <div style={{ background: "#FAFAFA", minHeight: "100vh" }}>
+      <div style={{ position: "sticky", top: 0, zIndex: 30, background: "rgba(255,255,255,0.94)", backdropFilter: "blur(12px)", borderBottom: `1px solid ${T.border}` }}><div style={{ maxWidth: 1180, margin: "0 auto", padding: "12px 20px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}><div style={{ display: "flex", alignItems: "center", gap: 10 }}><Logo size={26} /><span style={{ background: "#7C3AED", color: "#fff", fontSize: 10, fontWeight: 800, letterSpacing: "0.04em", padding: "4px 9px", borderRadius: 20 }}>SECURE SELLER VIEW · READ ONLY</span></div><Button variant="ghost" onClick={onBack}>← Back to Super Admin</Button></div></div>
+      <main style={{ maxWidth: 1180, margin: "0 auto", padding: "24px 20px 80px" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 14, flexWrap: "wrap", marginBottom: 18 }}><div><div style={{ color: T.muted, fontSize: 11, fontWeight: 700 }}>Read-only support view</div><h1 style={{ color: T.ink, fontFamily: "Inter", fontSize: 28, margin: "5px 0 4px" }}>{store.name}</h1><div style={{ color: T.muted, fontSize: 12 }}>{store.email} · Store ID: {store.id}</div></div><SellerHealthBadge store={store} storeAnalytics={analytics} /></div>
+        <div role="note" style={{ background: "#EFF6FF", border: "1px solid #BFDBFE", color: "#1D4ED8", borderRadius: 10, padding: "10px 12px", fontSize: 12, lineHeight: 1.45, marginBottom: 18 }}><Lock size={13} style={{ verticalAlign: -2, marginRight: 5 }} /> Ye secure read-only preview hai. Admin yahan seller ke behalf par changes nahi kar sakta, aur password kabhi display nahi hota.</div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 10, marginBottom: 20 }}>{cards.map((card) => <div key={card.label} style={{ background: T.cream, border: `1px solid ${T.border}`, borderRadius: 10, padding: "13px 14px" }}><div style={{ color: T.muted, fontSize: 11, fontWeight: 700 }}>{card.icon} {card.label}</div><div style={{ color: card.tone, fontSize: 22, fontWeight: 800, marginTop: 6 }}>{typeof card.value === "number" ? card.value.toLocaleString("en-IN") : card.value}</div></div>)}</div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: 16 }}><section style={{ background: T.cream, border: `1px solid ${T.border}`, borderRadius: 12, padding: 16 }}><h2 style={{ color: T.ink, fontSize: 16, margin: "0 0 12px" }}>Products ({(store.products || []).length})</h2>{(store.products || []).length === 0 ? <div style={{ color: T.muted, fontSize: 12 }}>No products added.</div> : <div style={{ display: "grid", gap: 8 }}>{store.products.slice(0, 12).map((product) => <div key={product.id} style={{ display: "flex", justifyContent: "space-between", gap: 10, padding: "9px 10px", background: T.paper, border: `1px solid ${T.border}`, borderRadius: 8 }}><span style={{ color: T.ink, fontSize: 12.5, fontWeight: 700 }}>{product.name}</span><span style={{ color: T.mint, fontSize: 12, fontWeight: 800 }}>₹{Number(product.price || 0).toLocaleString("en-IN")}</span></div>)}</div>}</section><section style={{ background: T.cream, border: `1px solid ${T.border}`, borderRadius: 12, padding: 16 }}><h2 style={{ color: T.ink, fontSize: 16, margin: "0 0 12px" }}>Recent Orders ({orders.length})</h2>{orders.length === 0 ? <div style={{ color: T.muted, fontSize: 12 }}>No orders yet.</div> : <div style={{ display: "grid", gap: 8 }}>{orders.slice(0, 10).map((order) => <div key={order.id} style={{ padding: "9px 10px", background: T.paper, border: `1px solid ${T.border}`, borderRadius: 8 }}><div style={{ display: "flex", justifyContent: "space-between", gap: 10 }}><span style={{ color: T.ink, fontSize: 12.5, fontWeight: 700 }}>{order.customer?.name || "Customer"}</span><span style={{ color: T.mint, fontSize: 12, fontWeight: 800 }}>₹{Number(order.total || 0).toLocaleString("en-IN")}</span></div><div style={{ color: T.muted, fontSize: 11, marginTop: 3 }}>{order.status || "New"} · {order.paymentStatus || "unpaid"}</div></div>)}</div>}</section></div>
+        <section style={{ background: T.cream, border: `1px solid ${T.border}`, borderRadius: 12, padding: 16, marginTop: 16 }}><h2 style={{ color: T.ink, fontSize: 16, margin: "0 0 8px" }}>Support snapshot</h2><div style={{ color: T.muted, fontSize: 12 }}>{supportTickets.filter((ticket) => !["resolved", "closed"].includes(ticket.status)).length} open ticket(s) · {Number(analytics.productViews) || 0} product views · {Number(analytics.addToCart) || 0} add-to-cart events</div></section>
+      </main>
+    </div>
+  );
+}
+
+function SuperAdminDashboard({ stores, productsByStore = {}, globalOrders = [], storeAnalytics = {}, auditLogs = [], announcements = [], supportTickets = [], platformVisitors, onActivate, onBlock, onExtendTrial, onApprove, onVerifyPayment, onPublishAnnouncement, onUpdateSupportTicket, onViewAsSeller, onLogout, onResetPassword }) {
   const [activeTab, setActiveTab] = useState("overview");
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
@@ -4676,6 +4882,7 @@ function SuperAdminDashboard({ stores, productsByStore = {}, globalOrders = [], 
   const enriched = useMemo(() => stores.map((s) => ({ ...s, _status: getStoreStatus(s) })), [stores]);
   const pendingApprovals = enriched.filter((store) => getStoreApprovalStatus(store) === "pending").length;
   const pendingPayments = enriched.filter((store) => store.paymentProofStatus === "pending").length;
+  const pendingSupportTickets = supportTickets.filter((ticket) => !["resolved", "closed"].includes(ticket.status)).length;
 
   const globalAnalytics = useMemo(() => {
     const views = enriched.reduce((sum, store) => sum + (Number(store.visitorCount) || 0), 0);
@@ -4705,8 +4912,9 @@ function SuperAdminDashboard({ stores, productsByStore = {}, globalOrders = [], 
     const weekAgo = Date.now() - 7 * 86400000;
     const newThisWeek = enriched.filter((s) => s.trialStartedAt && new Date(s.trialStartedAt).getTime() > weekAgo).length;
     const revenue = enriched.filter((s) => getStoreApprovalStatus(s) === "approved" && s._status.status === "active" && s.plan).reduce((sum, s) => sum + (PLAN_PRICES[s.plan]?.price || 0), 0);
-    return { total, active, blocked, newThisWeek, revenue };
-  }, [enriched]);
+    const health = total ? Math.round(enriched.reduce((sum, store) => sum + getSellerHealthScore(store, storeAnalytics[store.id] || {}).score, 0) / total) : 0;
+    return { total, active, blocked, newThisWeek, revenue, health };
+  }, [enriched, storeAnalytics]);
 
   const filtered = useMemo(() => {
     let list = enriched;
@@ -4719,8 +4927,9 @@ function SuperAdminDashboard({ stores, productsByStore = {}, globalOrders = [], 
     if (sortBy === "newest") sorted.sort((a, b) => new Date(b.trialStartedAt || 0) - new Date(a.trialStartedAt || 0));
     else if (sortBy === "name") sorted.sort((a, b) => a.name.localeCompare(b.name));
     else if (sortBy === "daysleft") sorted.sort((a, b) => a._status.daysLeft - b._status.daysLeft);
+    else if (sortBy === "health") sorted.sort((a, b) => getSellerHealthScore(b, storeAnalytics[b.id] || {}).score - getSellerHealthScore(a, storeAnalytics[a.id] || {}).score);
     return sorted;
-  }, [enriched, statusFilter, search, sortBy]);
+  }, [enriched, statusFilter, search, sortBy, storeAnalytics]);
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / PER_PAGE));
   const pageItems = filtered.slice((page - 1) * PER_PAGE, page * PER_PAGE);
@@ -4729,9 +4938,10 @@ function SuperAdminDashboard({ stores, productsByStore = {}, globalOrders = [], 
   return (
     <div style={{ background: "#FAFAFA", minHeight: "100vh" }}>
       <style>{`
-        .sads-admin-actions { display: grid; grid-template-columns: repeat(5, 1fr); gap: 8px; }
+        .sads-admin-actions { display: grid; grid-template-columns: repeat(6, 1fr); gap: 8px; }
+        @media (max-width: 980px) { .sads-admin-actions { grid-template-columns: repeat(3, 1fr); } }
         @media (max-width: 720px) { .sads-admin-actions { grid-template-columns: repeat(2, 1fr); } }
-        .sads-admin-stats { display: grid; grid-template-columns: repeat(5, 1fr); gap: 16px; }
+        .sads-admin-stats { display: grid; grid-template-columns: repeat(6, 1fr); gap: 16px; }
         @media (max-width: 980px) { .sads-admin-stats { grid-template-columns: repeat(3, 1fr); } }
         @media (max-width: 640px) { .sads-admin-stats { grid-template-columns: repeat(2, 1fr); } }
         .sads-admin-meta { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
@@ -4763,8 +4973,10 @@ function SuperAdminDashboard({ stores, productsByStore = {}, globalOrders = [], 
         <AdminTabButton active={activeTab === "analytics"} label="Global Analytics" onClick={() => setActiveTab("analytics")} />
         <AdminTabButton active={activeTab === "approvals"} label="Store Approval" count={pendingApprovals} onClick={() => setActiveTab("approvals")} />
         <AdminTabButton active={activeTab === "payments"} label="Payments" count={pendingPayments} onClick={() => setActiveTab("payments")} />
-        <AdminTabButton active={activeTab === "audit"} label="Audit Logs" onClick={() => setActiveTab("audit")} />
-        <AdminTabButton active={activeTab === "broadcast"} label="Broadcast Notifications" onClick={() => setActiveTab("broadcast")} />
+         <AdminTabButton active={activeTab === "audit"} label="Audit Logs" onClick={() => setActiveTab("audit")} />
+         <AdminTabButton active={activeTab === "broadcast"} label="Broadcast Notifications" onClick={() => setActiveTab("broadcast")} />
+         <AdminTabButton active={activeTab === "support"} label="Support Tickets" count={pendingSupportTickets} onClick={() => setActiveTab("support")} />
+         <AdminTabButton active={activeTab === "subscriptions"} label="Subscriptions" onClick={() => setActiveTab("subscriptions")} />
       </div>
 
       <div style={{ maxWidth: 1180, margin: "0 auto", padding: "24px 20px 80px" }}>
@@ -4772,16 +4984,19 @@ function SuperAdminDashboard({ stores, productsByStore = {}, globalOrders = [], 
           {activeTab === "analytics" && <AdminAnalyticsPanel metrics={globalAnalytics} topStores={globalAnalytics.topStores} onExportStores={exportStores} onExportOrders={exportOrders} />}
           {activeTab === "approvals" && <StoreApprovalPanel stores={enriched} onApprove={onApprove} />}
           {activeTab === "payments" && <PaymentVerificationPanel stores={enriched} onVerify={onVerifyPayment} />}
-          {activeTab === "audit" && <AdminAuditLogPanel logs={auditLogs} />}
-          {activeTab === "broadcast" && <BroadcastNotificationsPanel announcements={announcements} onPublish={onPublishAnnouncement} />}
+           {activeTab === "audit" && <AdminAuditLogPanel logs={auditLogs} />}
+           {activeTab === "broadcast" && <BroadcastNotificationsPanel announcements={announcements} onPublish={onPublishAnnouncement} />}
+           {activeTab === "support" && <SupportTicketsAdminPanel tickets={supportTickets} stores={enriched} onUpdate={onUpdateSupportTicket} />}
+           {activeTab === "subscriptions" && <SubscriptionManagementPanel stores={enriched} onActivate={onActivate} onExtendTrial={onExtendTrial} />}
         </div>}
         {activeTab === "overview" && <div>
         <div className="sads-admin-stats" style={{ marginBottom: 28 }}>
           <AdminStatCard icon={Store} label="Total Stores" value={stats.total} sub={stats.newThisWeek > 0 ? `+${stats.newThisWeek} is hafte` : "Is hafte koi naya nahi"} tint={T.mint} />
           <AdminStatCard icon={TrendingUp} label="Active Stores" value={stats.active} sub={stats.total ? `${Math.round((stats.active / stats.total) * 100)}% of total` : "—"} tint="#2563EB" />
           <AdminStatCard icon={Eye} label="Platform Visitors" value={platformVisitors} sub="Main SaaS homepage" tint="#7C3AED" />
-          <AdminStatCard icon={QrCode} label="Active Plans Revenue" value={`₹${stats.revenue.toLocaleString("en-IN")}`} sub="Current active paid plans" tint="#F59E0B" />
-          <AdminStatCard icon={Ban} label="Blocked Stores" value={stats.blocked} sub={stats.blocked > 0 ? "Review karo" : "Sab clear"} tint="#DC2626" />
+           <AdminStatCard icon={QrCode} label="Active Plans Revenue" value={`₹${stats.revenue.toLocaleString("en-IN")}`} sub="Current active paid plans" tint="#F59E0B" />
+           <AdminStatCard icon={Ban} label="Blocked Stores" value={stats.blocked} sub={stats.blocked > 0 ? "Review karo" : "Sab clear"} tint="#DC2626" />
+           <AdminStatCard icon={Heart} label="Avg Health Score" value={`${stats.health}/100`} sub="Seller setup + activity" tint="#DB2777" />
         </div>
 
         {/* Toolbar: search, filter, sort */}
@@ -4804,8 +5019,9 @@ function SuperAdminDashboard({ stores, productsByStore = {}, globalOrders = [], 
             <ArrowUpDown size={13} color={T.muted} style={{ position: "absolute", left: 11, top: "50%", transform: "translateY(-50%)", pointerEvents: "none" }} />
             <select value={sortBy} onChange={(e) => setSortBy(e.target.value)} style={{ minHeight: 42, padding: "0 14px 0 32px", borderRadius: 10, border: `1px solid ${T.border}`, fontFamily: "Inter", fontSize: 13, background: "#fff", cursor: "pointer" }}>
               <option value="newest">Newest</option>
-              <option value="name">Name A-Z</option>
-              <option value="daysleft">Days Left</option>
+               <option value="name">Name A-Z</option>
+               <option value="daysleft">Days Left</option>
+               <option value="health">Health Score</option>
             </select>
           </div>
         </div>
@@ -4866,6 +5082,7 @@ function SuperAdminDashboard({ stores, productsByStore = {}, globalOrders = [], 
 
                 {/* Actions */}
                 <div className="sads-admin-actions" style={{ marginBottom: 16 }}>
+                  <AdminActionBtn icon={Eye} label="Secure View" sub="Read only" tone="primary" onClick={() => onViewAsSeller(s.id)} />
                   <AdminActionBtn icon={Clock} label="+7 Days" sub="Trial" onClick={() => onExtendTrial(s.id, 7)} />
                   <AdminActionBtn icon={QrCode} label="₹500" sub="Monthly" tone="primary" onClick={() => onActivate(s.id, "monthly")} />
                   <AdminActionBtn icon={QrCode} label="₹1350" sub="3 Months" onClick={() => onActivate(s.id, "quarterly")} />

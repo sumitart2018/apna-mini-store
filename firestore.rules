@@ -214,6 +214,36 @@ service cloud.firestore {
       allow update, delete: if isSuperAdmin();
     }
 
+    // Sellers can open support tickets and read only their own tickets.
+    // Super Admin can update status/reply, but no password or auth secret is
+    // ever part of this collection.
+    match /supportTickets/{ticketId} {
+      allow read: if isSuperAdmin()
+        || (request.auth != null && resource.data.storeId == request.auth.uid);
+      allow create: if request.auth != null
+        && request.resource.data.storeId == request.auth.uid
+        && request.resource.data.keys().hasOnly([
+          "storeId", "subject", "message", "priority", "status", "adminReply", "createdAt", "updatedAt"
+        ])
+        && request.resource.data.subject is string
+        && request.resource.data.subject.size() >= 3
+        && request.resource.data.subject.size() <= 120
+        && request.resource.data.message is string
+        && request.resource.data.message.size() >= 5
+        && request.resource.data.message.size() <= 1200
+        && request.resource.data.priority in ["normal", "high", "urgent"]
+        && request.resource.data.status == "open"
+        && request.resource.data.adminReply == "";
+      allow update: if isSuperAdmin()
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          "status", "adminReply", "priority", "updatedAt"
+        ])
+        && request.resource.data.status in ["open", "in_progress", "resolved", "closed"]
+        && request.resource.data.adminReply is string
+        && request.resource.data.adminReply.size() <= 1200;
+      allow delete: if false;
+    }
+
     // Immutable administrative history. It records actions, never passwords
     // or payment secrets.
     match /auditLogs/{logId} {
