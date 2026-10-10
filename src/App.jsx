@@ -1,10 +1,10 @@
 import React, { useState, useEffect, useCallback, useRef, useMemo } from "react";
-import { ShoppingCart, MessageCircle, Palette, Package, QrCode, BarChart3, ShieldCheck, Smartphone, Users, Boxes, Search, Zap, Menu, X, Facebook, Instagram, Youtube, Heart, Truck, Headphones, User, Phone, MapPin, FileText, Mail, Twitter, ShoppingBag, Shirt, Coffee, KeyRound, Grid3x3, Share2, SlidersHorizontal, Home, Award, Star, ExternalLink, Globe, UtensilsCrossed, Moon, Sun, Sparkles, TrendingUp, Flame, Bell, LogOut, Filter, ArrowUpDown, ChevronLeft, ChevronRight, Store, Ban, CalendarDays, Clock, Hash, TrendingDown, Copy, Lock, Eye, EyeOff, Loader2, Download, CheckCircle2, ClipboardList, Receipt, Activity } from "lucide-react";
+import { ShoppingCart, MessageCircle, Palette, Package, QrCode, BarChart3, ShieldCheck, Smartphone, Users, Boxes, Search, Zap, Menu, X, Facebook, Instagram, Youtube, Heart, Truck, Headphones, User, Phone, MapPin, FileText, Mail, Twitter, ShoppingBag, Shirt, Coffee, KeyRound, Grid3x3, Share2, SlidersHorizontal, Home, Award, Star, ExternalLink, Globe, UtensilsCrossed, Moon, Sun, Wrench, Sparkles, TrendingUp, Flame, Bell, LogOut, Filter, ArrowUpDown, ChevronLeft, ChevronRight, Store, Ban, CalendarDays, Clock, Hash, TrendingDown, Copy, Lock, Eye, EyeOff, Loader2, Download, CheckCircle2, ClipboardList, Receipt, Activity } from "lucide-react";
 import {
-  watchAllStores, watchAllProducts, watchOrdersForStore, watchAllOrders, watchAllStoreAnalytics, watchAdminAuditLogs, watchAnnouncements, watchAllSupportTickets, watchSupportTicketsForStore, watchPlatformAnalytics, watchStoreAnalytics, watchAuthState,
+  watchAllStores, watchAllProducts, watchOrdersForStore, watchAllOrders, watchAllStoreAnalytics, watchAdminAuditLogs, watchAnnouncements, watchAllSupportTickets, watchSupportTicketsForStore, watchPlatformAnalytics, watchPlatformSettings, watchStoreAnalytics, watchAuthState,
   signUpSeller, signInSeller, signOutUser, friendlyAuthError,
   updateStoreProfile, addStoreCategory, removeStoreCategory,
-  setStorePlan, setStoreBlocked, setTrialStartedAt, setStoreApproval, setPaymentVerification, writeAdminAuditLog, createAnnouncement, createSupportTicket, updateSupportTicket,
+  setStorePlan, setStoreBlocked, setStoreMaintenance, setPlatformMaintenance, setTrialStartedAt, setStoreApproval, setPaymentVerification, writeAdminAuditLog, createAnnouncement, createSupportTicket, updateSupportTicket,
   createProduct, editProduct, removeProduct,
   createOrder, setOrderStatus, setOrderPaymentStatus, uploadStoreImage, resetSellerPassword, signInWithGoogle,
   trackPlatformVisit, trackStoreVisit, trackStoreAnalytics, watchReviewsForStore, watchApprovedReviews,
@@ -565,6 +565,7 @@ export default function App() {
   const [supportTickets, setSupportTickets] = useState([]);
   const [reviewsByStore, setReviewsByStore] = useState({});
   const [platformVisitors, setPlatformVisitors] = useState(0);
+  const [platformMaintenance, setPlatformMaintenanceState] = useState({ enabled: false, message: "Platform maintenance chal raha hai. Kripya thodi der baad dobara aaiye." });
   // undefined = auth state not yet resolved, null = logged out, object = logged in
   const [authUser, setAuthUser] = useState(undefined);
   const [view, setView] = useState("directory");
@@ -610,6 +611,12 @@ export default function App() {
     const unsubPlatformAnalytics = watchPlatformAnalytics((data) => {
       setPlatformVisitors(Number(data.visitorCount) || 0);
     });
+    const unsubPlatformSettings = watchPlatformSettings((data) => {
+      setPlatformMaintenanceState({
+        enabled: Boolean(data.enabled),
+        message: String(data.message || "Platform maintenance chal raha hai. Kripya thodi der baad dobara aaiye."),
+      });
+    }, (err) => console.warn("Platform maintenance setting load nahi hui:", err));
     const unsubAuth = watchAuthState(setAuthUser);
     // Safety net: if Firestore never calls back at all (wrong project ID,
     // network block, etc.) — neither success nor error — don't hang on
@@ -620,7 +627,7 @@ export default function App() {
         return stillLoading;
       });
     }, 10000);
-    return () => { unsubStores(); unsubProducts(); unsubPlatformAnalytics(); unsubAuth(); clearTimeout(timeout); };
+    return () => { unsubStores(); unsubProducts(); unsubPlatformAnalytics(); unsubPlatformSettings(); unsubAuth(); clearTimeout(timeout); };
   }, []);
 
   // Count one visit per browser session for each public surface. This keeps a
@@ -628,7 +635,7 @@ export default function App() {
   useEffect(() => {
     if (view !== "storefront" || !activeStoreId) return;
     const store = stores.find((item) => item.id === activeStoreId || item.slug === activeStoreId);
-    if (!store || getStoreApprovalStatus(store) !== "approved" || !["active", "trial"].includes(getStoreStatus(store).status)) return;
+    if (!store || store.maintenanceMode || getStoreApprovalStatus(store) !== "approved" || !["active", "trial"].includes(getStoreStatus(store).status)) return;
     const storeId = store.id;
     const key = `apna-mini-store:visited:store:${storeId}`;
     try {
@@ -1121,6 +1128,25 @@ export default function App() {
       flash("Payment verification update nahi hua");
     }
   };
+  const updatePlatformMaintenance = async ({ enabled, message }) => {
+    try {
+      const next = { enabled: Boolean(enabled), message: String(message || "").trim().slice(0, 240) };
+      await setPlatformMaintenance(next);
+      recordAdminAction(next.enabled ? "platform_maintenance_enabled" : "platform_maintenance_disabled", "", { message: next.message });
+      flash(next.enabled ? "पूरी website maintenance mode mein chali gayi" : "Website live kar di gayi");
+    } catch (e) {
+      flash("Platform maintenance setting save nahi hui");
+    }
+  };
+  const updateStoreMaintenance = async (storeId, enabled, message = "") => {
+    try {
+      await setStoreMaintenance(storeId, enabled, message);
+      recordAdminAction(enabled ? "store_maintenance_enabled" : "store_maintenance_disabled", storeId, { message: String(message || "").trim() });
+      flash(enabled ? "Store temporarily band kar diya" : "Store dobara live kar diya");
+    } catch (e) {
+      flash("Store maintenance setting save nahi hui");
+    }
+  };
   const publishAnnouncement = async (payload) => {
     try {
       await createAnnouncement(payload, authUser.email);
@@ -1293,6 +1319,9 @@ export default function App() {
     );
   }
   if (loading) return <div style={{ padding: 60, textAlign: "center", fontFamily: "Inter", color: T.ink }}>Loading…</div>;
+  if (platformMaintenance.enabled && !isSuperAdmin && view !== "superadmin-login") {
+    return <MaintenanceScreen message={platformMaintenance.message} onAdminLogin={() => setView("superadmin-login")} />;
+  }
 
   return (
     <div style={{ background: T.paper, minHeight: "100vh", fontFamily: "Inter" }}>
@@ -1313,7 +1342,7 @@ export default function App() {
 )}
       {view === "superadmin-login" && <SuperAdminLogin onSubmit={superAdminLogin} onBack={() => setView("directory")} />}
       {view === "superadmin" && isSuperAdmin && (
-        <SuperAdminDashboard stores={stores} productsByStore={productsByStore} globalOrders={adminOrders} storeAnalytics={adminAnalyticsByStore} auditLogs={adminAuditLogs} announcements={announcements} supportTickets={supportTickets} platformVisitors={platformVisitors} onActivate={activatePlan} onBlock={toggleBlockStore} onExtendTrial={extendTrial} onApprove={updateStoreApproval} onVerifyPayment={updatePaymentVerification} onPublishAnnouncement={publishAnnouncement} onUpdateSupportTicket={changeSupportTicket} onViewAsSeller={openSecureSellerView} onLogout={() => { signOutUser(); setView("directory"); }} onResetPassword={sendResetEmail} />
+        <SuperAdminDashboard stores={stores} productsByStore={productsByStore} globalOrders={adminOrders} storeAnalytics={adminAnalyticsByStore} auditLogs={adminAuditLogs} announcements={announcements} supportTickets={supportTickets} platformVisitors={platformVisitors} platformMaintenance={platformMaintenance} onUpdatePlatformMaintenance={updatePlatformMaintenance} onUpdateStoreMaintenance={updateStoreMaintenance} onActivate={activatePlan} onBlock={toggleBlockStore} onExtendTrial={extendTrial} onApprove={updateStoreApproval} onVerifyPayment={updatePaymentVerification} onPublishAnnouncement={publishAnnouncement} onUpdateSupportTicket={changeSupportTicket} onViewAsSeller={openSecureSellerView} onLogout={() => { signOutUser(); setView("directory"); }} onResetPassword={sendResetEmail} />
       )}
       {view === "support-dashboard" && isSuperAdmin && supportStore && supportSession && (
         <div>
@@ -1332,7 +1361,10 @@ export default function App() {
       {view === "dashboard" && ownerStore && (
         <Dashboard store={ownerStore} storeAnalytics={analyticsByStore[ownerStore.id] || {}} announcements={announcements} supportTickets={supportTickets} onCreateSupportTicket={submitSupportTicket} onAddProduct={addProduct} onUpdateProduct={updateProduct} onDeleteProduct={deleteProduct} onAddCategory={addCategory} onDeleteCategory={deleteCategory} onUpdateStore={updateOwnerStore} onSubmitPayment={submitPaymentProof} onViewStore={() => openStore(ownerStore.id)} onUpdateOrderStatus={updateOrderStatus} onUpdateOrderPaymentStatus={updateOrderPaymentStatus} onUpdateReviewStatus={updateReviewStatus} onDeleteReview={removeReview} saveState={saveState} />
       )}
-      {view === "storefront" && activeStore && (
+      {view === "storefront" && activeStore && activeStore.maintenanceMode && (
+        <StoreMaintenanceScreen store={activeStore} />
+      )}
+      {view === "storefront" && activeStore && !activeStore.maintenanceMode && (
         <Storefront store={activeStore} cart={cart} wishlist={wishlist} onBack={() => {
           window.history.pushState({}, "", "/");
           setActiveStoreId(null);
@@ -1341,6 +1373,35 @@ export default function App() {
       )}
       <Toast msg={toast} />
       {supportPromptStoreId && <SupportAuthModal store={stores.find((item) => item.id === supportPromptStoreId)} code={supportCode} setCode={setSupportCode} error={supportGateError} loading={supportGateLoading} onSubmit={createSupportSession} onClose={() => { if (!supportGateLoading) setSupportPromptStoreId(null); }} />}
+    </div>
+  );
+}
+
+function MaintenanceScreen({ message, onAdminLogin }) {
+  return (
+    <div style={{ minHeight: "100vh", background: "linear-gradient(135deg, #F8FAFC, #EEF2FF)", display: "flex", alignItems: "center", justifyContent: "center", padding: 24, fontFamily: "Inter", color: T.ink }}>
+      <div style={{ width: "min(100%, 520px)", background: "#fff", border: `1px solid ${T.border}`, borderRadius: 22, padding: "42px 28px", textAlign: "center", boxShadow: "0 18px 60px rgba(15,23,42,0.10)" }}>
+        <div style={{ width: 68, height: 68, margin: "0 auto 18px", borderRadius: 20, background: "#FEF3C7", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 32 }}>🛠️</div>
+        <h1 style={{ margin: 0, fontFamily: "Baloo 2, Inter", fontSize: 30 }}>Thodi der mein wapas aayenge</h1>
+        <p style={{ margin: "12px auto 0", maxWidth: 390, color: T.muted, fontSize: 14, lineHeight: 1.65 }}>{message || "Website par maintenance chal raha hai. Kripya thodi der baad dobara aaiye."}</p>
+        <div style={{ display: "flex", justifyContent: "center", gap: 10, flexWrap: "wrap", marginTop: 24 }}>
+          <button type="button" onClick={() => window.location.reload()} style={{ minHeight: 42, border: "none", borderRadius: 10, background: T.mint, color: "#fff", padding: "0 16px", fontWeight: 800, cursor: "pointer" }}>Dobara check karein</button>
+          <button type="button" onClick={onAdminLogin} style={{ minHeight: 42, border: `1px solid ${T.border}`, borderRadius: 10, background: "#fff", color: T.ink, padding: "0 16px", fontWeight: 700, cursor: "pointer" }}>Super Admin Login</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function StoreMaintenanceScreen({ store }) {
+  return (
+    <div style={{ minHeight: "100vh", background: T.paper, display: "flex", alignItems: "center", justifyContent: "center", padding: 24, fontFamily: "Inter", color: T.ink }}>
+      <div style={{ width: "min(100%, 500px)", background: T.cream, border: `1px solid ${T.border}`, borderRadius: 20, padding: "38px 26px", textAlign: "center", boxShadow: "0 16px 48px rgba(15,23,42,0.08)" }}>
+        <div style={{ fontSize: 34, marginBottom: 12 }}>🛍️</div>
+        <h1 style={{ margin: 0, fontFamily: "Baloo 2, Inter", fontSize: 28 }}>{store?.name || "Store"}</h1>
+        <div style={{ display: "inline-flex", alignItems: "center", gap: 6, marginTop: 12, padding: "6px 10px", borderRadius: 20, background: "#FEF3C7", color: "#92400E", fontSize: 11.5, fontWeight: 800 }}>Temporarily unavailable</div>
+        <p style={{ margin: "14px auto 0", maxWidth: 380, color: T.muted, fontSize: 14, lineHeight: 1.6 }}>{store?.maintenanceMessage || "Is store par abhi maintenance chal raha hai. Kripya baad mein dobara aaiye."}</p>
+      </div>
     </div>
   );
 }
@@ -1436,15 +1497,15 @@ function DirectoryStoreCard({ store, onOpen, compact = false }) {
           ) : (
             <div style={{ width: 46, height: 46, borderRadius: 12, background: `linear-gradient(135deg, ${store.color || DK.green}, ${DK.greenSoft})`, display: "flex", alignItems: "center", justifyContent: "center", color: "#fff", fontWeight: 800, fontSize: 14, flexShrink: 0 }}>{initials}</div>
           )}
-          <span style={{ fontSize: 10, fontWeight: 800, background: status.status === "trial" ? "#EFF6FF" : "#ECFDF5", color: status.status === "trial" ? "#2563EB" : "#047857", padding: "4px 7px", borderRadius: 20, whiteSpace: "nowrap" }}>
-            {status.status === "trial" ? `TRIAL ${status.daysLeft}d` : "LIVE"}
+          <span style={{ fontSize: 10, fontWeight: 800, background: store.maintenanceMode ? "#FEF3C7" : status.status === "trial" ? "#EFF6FF" : "#ECFDF5", color: store.maintenanceMode ? "#92400E" : status.status === "trial" ? "#2563EB" : "#047857", padding: "4px 7px", borderRadius: 20, whiteSpace: "nowrap" }}>
+            {store.maintenanceMode ? "MAINTENANCE" : status.status === "trial" ? `TRIAL ${status.daysLeft}d` : "LIVE"}
           </span>
         </div>
         <div style={{ fontWeight: 800, fontSize: 15, color: DK.text, marginTop: 12, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{store.name}</div>
         <div style={{ fontSize: 12.5, color: DK.muted, marginTop: 4, minHeight: 34, lineHeight: 1.4 }}>{store.tagline || `${store.products.length} products available`}</div>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, marginTop: 12 }}>
           <span style={{ fontSize: 11, color: DK.muted }}>{store.products.length} products</span>
-          <span style={{ color: DK.green, fontWeight: 800, fontSize: 12.5 }}>Visit Store →</span>
+          <span style={{ color: store.maintenanceMode ? "#92400E" : DK.green, fontWeight: 800, fontSize: 12.5 }}>{store.maintenanceMode ? "Temporarily closed" : "Visit Store →"}</span>
         </div>
       </button>
     </GlassCard>
@@ -4973,6 +5034,86 @@ function SubscriptionManagementPanel({ stores = [], onActivate, onExtendTrial })
   );
 }
 
+function MaintenanceModePanel({ stores = [], platformMaintenance = {}, onUpdatePlatform, onUpdateStore }) {
+  const [platformDraft, setPlatformDraft] = useState({ enabled: Boolean(platformMaintenance.enabled), message: platformMaintenance.message || "" });
+  const [storeDrafts, setStoreDrafts] = useState({});
+  const [search, setSearch] = useState("");
+
+  useEffect(() => {
+    setPlatformDraft({ enabled: Boolean(platformMaintenance.enabled), message: platformMaintenance.message || "" });
+  }, [platformMaintenance.enabled, platformMaintenance.message]);
+
+  useEffect(() => {
+    setStoreDrafts((current) => {
+      const next = { ...current };
+      stores.forEach((store) => {
+        if (!next[store.id]) next[store.id] = { enabled: Boolean(store.maintenanceMode), message: store.maintenanceMessage || "" };
+      });
+      return next;
+    });
+  }, [stores]);
+
+  const visibleStores = stores.filter((store) => {
+    const query = search.trim().toLowerCase();
+    return !query || [store.name, store.email, store.id].filter(Boolean).join(" ").toLowerCase().includes(query);
+  });
+  const updateDraft = (storeId, patch) => setStoreDrafts((current) => ({ ...current, [storeId]: { ...(current[storeId] || {}), ...patch } }));
+
+  return (
+    <section aria-labelledby="maintenance-mode-title" style={{ background: T.cream, border: `1px solid ${T.border}`, borderRadius: 14, padding: 18 }}>
+      <div style={{ marginBottom: 18 }}>
+        <h2 id="maintenance-mode-title" style={{ margin: 0, fontFamily: "Inter", fontSize: 19, color: T.ink }}>🛠️ Maintenance Mode</h2>
+        <p style={{ color: T.muted, fontSize: 12, margin: "4px 0 0", lineHeight: 1.5 }}>पूरी platform या किसी एक store को temporary बंद करें। Super Admin access हमेशा चालू रहेगा।</p>
+      </div>
+
+      <div style={{ background: platformDraft.enabled ? "#FFFBEB" : "#F0FDF4", border: `1px solid ${platformDraft.enabled ? "#FDE68A" : "#BBF7D0"}`, borderRadius: 12, padding: 16, marginBottom: 22 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, flexWrap: "wrap" }}>
+          <div>
+            <div style={{ color: T.ink, fontSize: 14, fontWeight: 800 }}>पूरी website</div>
+            <div style={{ color: T.muted, fontSize: 11.5, marginTop: 4 }}>{platformDraft.enabled ? "Visitors को maintenance screen दिख रही है" : "Website अभी live है"}</div>
+          </div>
+          <label style={{ display: "inline-flex", alignItems: "center", gap: 8, color: platformDraft.enabled ? "#92400E" : "#166534", fontSize: 12, fontWeight: 800, cursor: "pointer" }}>
+            <input type="checkbox" checked={platformDraft.enabled} onChange={(event) => setPlatformDraft((current) => ({ ...current, enabled: event.target.checked }))} style={{ width: 18, height: 18, accentColor: "#D97706" }} />
+            {platformDraft.enabled ? "Maintenance ON" : "Maintenance OFF"}
+          </label>
+        </div>
+        <textarea value={platformDraft.message} maxLength={240} onChange={(event) => setPlatformDraft((current) => ({ ...current, message: event.target.value }))} placeholder="Visitors ko kya message dikhana hai?" style={{ width: "100%", minHeight: 74, resize: "vertical", marginTop: 13, padding: "10px 11px", border: `1px solid ${T.border}`, borderRadius: 9, fontFamily: "Inter", fontSize: 12, boxSizing: "border-box" }} />
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, marginTop: 9, flexWrap: "wrap" }}>
+          <span style={{ color: T.muted, fontSize: 10.5 }}>{platformDraft.message.length}/240 characters</span>
+          <button type="button" onClick={() => onUpdatePlatform(platformDraft)} style={{ minHeight: 38, border: "none", borderRadius: 9, background: platformDraft.enabled ? "#D97706" : T.mint, color: "#fff", padding: "0 14px", fontWeight: 800, cursor: "pointer" }}>Save Platform Setting</button>
+        </div>
+      </div>
+
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap", marginBottom: 12 }}>
+        <div><h3 style={{ margin: 0, color: T.ink, fontSize: 15 }}>Individual Stores</h3><div style={{ color: T.muted, fontSize: 11, marginTop: 3 }}>एक store बंद करने पर बाकी stores live रहेंगे।</div></div>
+        <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Store search..." aria-label="Maintenance store search" style={{ minHeight: 36, width: "min(100%, 240px)", padding: "0 10px", border: `1px solid ${T.border}`, borderRadius: 8, fontFamily: "Inter", fontSize: 12 }} />
+      </div>
+
+      <div style={{ display: "grid", gap: 10 }}>
+        {visibleStores.map((store) => {
+          const draft = storeDrafts[store.id] || { enabled: Boolean(store.maintenanceMode), message: store.maintenanceMessage || "" };
+          return (
+            <div key={store.id} style={{ background: "#fff", border: `1px solid ${draft.enabled ? "#FDE68A" : T.border}`, borderRadius: 11, padding: 13 }}>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
+                <div style={{ minWidth: 0 }}><div style={{ color: T.ink, fontWeight: 800, fontSize: 13 }}>{store.name}</div><div style={{ color: T.muted, fontSize: 10.5, marginTop: 3 }}>{store.email}</div></div>
+                <label style={{ display: "inline-flex", alignItems: "center", gap: 7, color: draft.enabled ? "#92400E" : T.muted, fontSize: 11.5, fontWeight: 800, cursor: "pointer" }}>
+                  <input type="checkbox" checked={draft.enabled} onChange={(event) => updateDraft(store.id, { enabled: event.target.checked })} style={{ width: 17, height: 17, accentColor: "#D97706" }} />
+                  {draft.enabled ? "Store OFF" : "Store live"}
+                </label>
+              </div>
+              <div style={{ display: "flex", gap: 8, alignItems: "flex-end", marginTop: 10, flexWrap: "wrap" }}>
+                <input value={draft.message} maxLength={240} onChange={(event) => updateDraft(store.id, { message: event.target.value })} placeholder="Store maintenance message" style={{ flex: "1 1 240px", minHeight: 36, padding: "0 10px", border: `1px solid ${T.border}`, borderRadius: 8, fontFamily: "Inter", fontSize: 11.5 }} />
+                <button type="button" onClick={() => onUpdateStore(store.id, draft.enabled, draft.message)} style={{ minHeight: 36, border: `1px solid ${draft.enabled ? "#F59E0B" : T.border}`, borderRadius: 8, background: draft.enabled ? "#FEF3C7" : "#fff", color: draft.enabled ? "#92400E" : T.ink, padding: "0 12px", fontWeight: 800, fontSize: 11.5, cursor: "pointer" }}>Save Store</button>
+              </div>
+            </div>
+          );
+        })}
+        {visibleStores.length === 0 && <div style={{ color: T.muted, fontSize: 12, padding: 20, textAlign: "center", border: `1px dashed ${T.border}`, borderRadius: 10 }}>Koi store nahi mila.</div>}
+      </div>
+    </section>
+  );
+}
+
 function SecureSellerView({ store, analytics = {}, supportTickets = [], onBack }) {
   const orders = store.orders || [];
   const revenue = orders.filter((order) => order.status !== "Cancelled").reduce((sum, order) => sum + (Number(order.total) || 0), 0);
@@ -4996,7 +5137,7 @@ function SecureSellerView({ store, analytics = {}, supportTickets = [], onBack }
   );
 }
 
-function SuperAdminDashboard({ stores, productsByStore = {}, globalOrders = [], storeAnalytics = {}, auditLogs = [], announcements = [], supportTickets = [], platformVisitors, onActivate, onBlock, onExtendTrial, onApprove, onVerifyPayment, onPublishAnnouncement, onUpdateSupportTicket, onViewAsSeller, onLogout, onResetPassword }) {
+function SuperAdminDashboard({ stores, productsByStore = {}, globalOrders = [], storeAnalytics = {}, auditLogs = [], announcements = [], supportTickets = [], platformVisitors, platformMaintenance, onUpdatePlatformMaintenance, onUpdateStoreMaintenance, onActivate, onBlock, onExtendTrial, onApprove, onVerifyPayment, onPublishAnnouncement, onUpdateSupportTicket, onViewAsSeller, onLogout, onResetPassword }) {
   const [activeTab, setActiveTab] = useState("overview");
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
@@ -5063,8 +5204,8 @@ function SuperAdminDashboard({ stores, productsByStore = {}, globalOrders = [], 
   return (
     <div style={{ background: "#FAFAFA", minHeight: "100vh" }}>
       <style>{`
-        .sads-admin-actions { display: grid; grid-template-columns: repeat(6, 1fr); gap: 8px; }
-        @media (max-width: 980px) { .sads-admin-actions { grid-template-columns: repeat(3, 1fr); } }
+        .sads-admin-actions { display: grid; grid-template-columns: repeat(7, 1fr); gap: 8px; }
+        @media (max-width: 980px) { .sads-admin-actions { grid-template-columns: repeat(4, 1fr); } }
         @media (max-width: 720px) { .sads-admin-actions { grid-template-columns: repeat(2, 1fr); } }
         .sads-admin-stats { display: grid; grid-template-columns: repeat(6, 1fr); gap: 16px; }
         @media (max-width: 980px) { .sads-admin-stats { grid-template-columns: repeat(3, 1fr); } }
@@ -5102,6 +5243,7 @@ function SuperAdminDashboard({ stores, productsByStore = {}, globalOrders = [], 
          <AdminTabButton active={activeTab === "broadcast"} label="Broadcast Notifications" onClick={() => setActiveTab("broadcast")} />
          <AdminTabButton active={activeTab === "support"} label="Support Tickets" count={pendingSupportTickets} onClick={() => setActiveTab("support")} />
          <AdminTabButton active={activeTab === "subscriptions"} label="Subscriptions" onClick={() => setActiveTab("subscriptions")} />
+         <AdminTabButton active={activeTab === "maintenance"} label="Maintenance Mode" onClick={() => setActiveTab("maintenance")} />
       </div>
 
       <div style={{ maxWidth: 1180, margin: "0 auto", padding: "24px 20px 80px" }}>
@@ -5113,6 +5255,7 @@ function SuperAdminDashboard({ stores, productsByStore = {}, globalOrders = [], 
            {activeTab === "broadcast" && <BroadcastNotificationsPanel announcements={announcements} onPublish={onPublishAnnouncement} />}
            {activeTab === "support" && <SupportTicketsAdminPanel tickets={supportTickets} stores={enriched} onUpdate={onUpdateSupportTicket} />}
            {activeTab === "subscriptions" && <SubscriptionManagementPanel stores={enriched} onActivate={onActivate} onExtendTrial={onExtendTrial} />}
+           {activeTab === "maintenance" && <MaintenanceModePanel stores={enriched} platformMaintenance={platformMaintenance} onUpdatePlatform={onUpdatePlatformMaintenance} onUpdateStore={onUpdateStoreMaintenance} />}
         </div>}
         {activeTab === "overview" && <div>
         <div className="sads-admin-stats" style={{ marginBottom: 28 }}>
@@ -5213,7 +5356,8 @@ function SuperAdminDashboard({ stores, productsByStore = {}, globalOrders = [], 
                   <AdminActionBtn icon={QrCode} label="₹500" sub="Monthly" tone="primary" onClick={() => onActivate(s.id, "monthly")} />
                   <AdminActionBtn icon={QrCode} label="₹1350" sub="3 Months" onClick={() => onActivate(s.id, "quarterly")} />
                   <AdminActionBtn icon={QrCode} label="₹3000" sub="Yearly" tone="dark" onClick={() => onActivate(s.id, "yearly")} />
-                  <AdminActionBtn icon={Ban} label={s.blocked ? "Unblock" : "Block"} tone={s.blocked ? "primary" : "danger"} onClick={() => onBlock(s.id)} />
+                  <AdminActionBtn icon={s.maintenanceMode ? Sun : Wrench} label={s.maintenanceMode ? "Go Live" : "Maintenance"} sub={s.maintenanceMode ? "Store" : "Temporarily off"} tone={s.maintenanceMode ? "primary" : "danger"} onClick={() => onUpdateStoreMaintenance(s.id, !s.maintenanceMode, s.maintenanceMessage)} />
+                  <AdminActionBtn icon={Ban} label={s.blocked ? "Unblock" : "Block"} sub="Access" tone={s.blocked ? "primary" : "danger"} onClick={() => onBlock(s.id)} />
                 </div>
 
                 {/* Bottom meta */}

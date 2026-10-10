@@ -176,6 +176,18 @@ service cloud.firestore {
       }
     }
 
+    // Maintenance settings are public-read so logged-out visitors can receive
+    // a clear maintenance screen. Only the Super Admin may change them.
+    match /platformSettings/{settingId} {
+      allow read: if settingId == "maintenance";
+      allow create, update: if settingId == "maintenance"
+        && isSuperAdmin()
+        && request.resource.data.enabled is bool
+        && request.resource.data.message is string
+        && request.resource.data.message.size() <= 240;
+      allow delete: if false;
+    }
+
     // The homepage loads public products with a collection-group query.
     // Orders intentionally have no collection-group read rule: only the
     // owning store may read its own orders through the nested rule above.

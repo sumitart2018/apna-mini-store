@@ -136,6 +136,12 @@ export async function setStorePlan(uid, planType, expiresAt) {
 export async function setStoreBlocked(uid, blocked) {
   await updateDoc(doc(db, "stores", uid), { blocked });
 }
+export async function setStoreMaintenance(uid, maintenanceMode, maintenanceMessage = "") {
+  await updateDoc(doc(db, "stores", uid), {
+    maintenanceMode: Boolean(maintenanceMode),
+    maintenanceMessage: String(maintenanceMessage || "").trim().slice(0, 240),
+  });
+}
 export async function setTrialStartedAt(uid, trialStartedAt) {
   await updateDoc(doc(db, "stores", uid), { trialStartedAt });
 }
@@ -324,6 +330,39 @@ export function watchPlatformAnalytics(onChange, onError) {
     (snap) => onChange(snap.exists() ? snap.data() : {}),
     (err) => { console.error("watchPlatformAnalytics failed:", err); if (onError) onError(err); }
   );
+}
+
+// The platform maintenance flag is read/written through a small server-side
+// API. This lets a logged-out visitor see the flag while keeping all writes
+// behind Firebase Admin token verification.
+export function watchPlatformSettings(onChange, onError) {
+  let stopped = false;
+  const load = async () => {
+    try {
+      const response = await fetch("/api/admin/platform-maintenance", { cache: "no-store" });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.error || "Platform maintenance setting load nahi hui");
+      if (!stopped) onChange(data);
+    } catch (err) {
+      console.error("watchPlatformSettings failed:", err);
+      if (!stopped && onError) onError(err);
+    }
+  };
+  load();
+  const timer = window.setInterval(load, 30000);
+  return () => { stopped = true; window.clearInterval(timer); };
+}
+
+export async function setPlatformMaintenance({ enabled, message }) {
+  const idToken = auth.currentUser ? await auth.currentUser.getIdToken() : "";
+  const response = await fetch("/api/admin/platform-maintenance", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${idToken}` },
+    body: JSON.stringify({ enabled: Boolean(enabled), message: String(message || "").trim().slice(0, 240) }),
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(data.error || "Platform maintenance setting save nahi hui");
+  return data;
 }
 
 export async function trackPlatformVisit() {
