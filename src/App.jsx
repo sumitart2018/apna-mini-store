@@ -161,6 +161,10 @@ const SUPER_ADMIN_EMAIL = "sumitart2018@gmail.com";
 // Razorpay Route/Linked Accounts. Keeping this flag in one place makes it
 // easy to enable later without changing the checkout rules in multiple spots.
 const RAZORPAY_ENABLED = false;
+// Unlisted entry point for the platform owner. It is intentionally not shown
+// on the public directory or maintenance screen; Firebase Auth remains the
+// real security boundary.
+const ADMIN_ENTRY_PATH = "/__apna-admin-login";
 const getEffectivePaymentMethod = (store) => {
   const method = store?.paymentMethod || "whatsapp";
   return method === "razorpay" && !RAZORPAY_ENABLED ? "whatsapp" : method;
@@ -385,6 +389,11 @@ function requestedStoreRoute() {
   }
 }
 
+function isAdminEntryRoute() {
+  if (typeof window === "undefined") return false;
+  return window.location.pathname.replace(/\/+$/, "") === ADMIN_ENTRY_PATH;
+}
+
 async function copyText(text) {
   try {
     if (navigator.clipboard) {
@@ -568,7 +577,7 @@ export default function App() {
   const [platformMaintenance, setPlatformMaintenanceState] = useState({ enabled: false, message: "Platform maintenance chal raha hai. Kripya thodi der baad dobara aaiye." });
   // undefined = auth state not yet resolved, null = logged out, object = logged in
   const [authUser, setAuthUser] = useState(undefined);
-  const [view, setView] = useState("directory");
+  const [view, setView] = useState(() => isAdminEntryRoute() ? "superadmin-login" : "directory");
   const [adminPreviewStoreId, setAdminPreviewStoreId] = useState(null);
   const [supportSession, setSupportSession] = useState(null);
   const [supportPromptStoreId, setSupportPromptStoreId] = useState(null);
@@ -693,7 +702,7 @@ export default function App() {
   useEffect(() => {
     if (authUser === undefined || didInitialAuthRedirect.current) return;
     didInitialAuthRedirect.current = true;
-    if (authUser) setView(isSuperAdmin ? "superadmin" : "dashboard");
+    if (authUser) setView(isSuperAdmin ? "superadmin" : (isAdminEntryRoute() ? "superadmin-login" : "dashboard"));
   }, [authUser, isSuperAdmin]);
 
   const activeStore =
@@ -1320,7 +1329,7 @@ export default function App() {
   }
   if (loading) return <div style={{ padding: 60, textAlign: "center", fontFamily: "Inter", color: T.ink }}>Loading…</div>;
   if (platformMaintenance.enabled && !isSuperAdmin && view !== "superadmin-login") {
-    return <MaintenanceScreen message={platformMaintenance.message} onAdminLogin={() => setView("superadmin-login")} />;
+    return <MaintenanceScreen message={platformMaintenance.message} />;
   }
 
   return (
@@ -1331,7 +1340,7 @@ export default function App() {
         <TopBar onHome={() => setView("directory")} session={session} onDashboard={() => setView("dashboard")} onLogout={() => { signOutUser(); setView("directory"); }} isSuperAdmin={isSuperAdmin} onSuperAdminLogout={() => { signOutUser(); setView("directory"); }} />
       )}
 
-      {view === "directory" && <Directory stores={stores} platformVisitors={platformVisitors} onOpen={openStore} onCreate={(theme = "classic") => { setSelectedTheme(theme); setView("signup"); }} onLogin={() => setView("login")} onSuperAdmin={() => setView("superadmin-login")} />}
+      {view === "directory" && <Directory stores={stores} platformVisitors={platformVisitors} onOpen={openStore} onCreate={(theme = "classic") => { setSelectedTheme(theme); setView("signup"); }} onLogin={() => setView("login")} />}
       {view === "signup" && <SignupForm initialTheme={selectedTheme} onSubmit={createStore} onLogin={() => setView("login")} />}
       {view === "login" && (
   <LoginForm
@@ -1377,16 +1386,15 @@ export default function App() {
   );
 }
 
-function MaintenanceScreen({ message, onAdminLogin }) {
+function MaintenanceScreen({ message }) {
   return (
     <div style={{ minHeight: "100vh", background: "linear-gradient(135deg, #F8FAFC, #EEF2FF)", display: "flex", alignItems: "center", justifyContent: "center", padding: 24, fontFamily: "Inter", color: T.ink }}>
       <div style={{ width: "min(100%, 520px)", background: "#fff", border: `1px solid ${T.border}`, borderRadius: 22, padding: "42px 28px", textAlign: "center", boxShadow: "0 18px 60px rgba(15,23,42,0.10)" }}>
         <div style={{ width: 68, height: 68, margin: "0 auto 18px", borderRadius: 20, background: "#FEF3C7", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 32 }}>🛠️</div>
         <h1 style={{ margin: 0, fontFamily: "Baloo 2, Inter", fontSize: 30 }}>Thodi der mein wapas aayenge</h1>
         <p style={{ margin: "12px auto 0", maxWidth: 390, color: T.muted, fontSize: 14, lineHeight: 1.65 }}>{message || "Website par maintenance chal raha hai. Kripya thodi der baad dobara aaiye."}</p>
-        <div style={{ display: "flex", justifyContent: "center", gap: 10, flexWrap: "wrap", marginTop: 24 }}>
+        <div style={{ display: "flex", justifyContent: "center", marginTop: 24 }}>
           <button type="button" onClick={() => window.location.reload()} style={{ minHeight: 42, border: "none", borderRadius: 10, background: T.mint, color: "#fff", padding: "0 16px", fontWeight: 800, cursor: "pointer" }}>Dobara check karein</button>
-          <button type="button" onClick={onAdminLogin} style={{ minHeight: 42, border: `1px solid ${T.border}`, borderRadius: 10, background: "#fff", color: T.ink, padding: "0 16px", fontWeight: 700, cursor: "pointer" }}>Super Admin Login</button>
         </div>
       </div>
     </div>
@@ -1512,7 +1520,7 @@ function DirectoryStoreCard({ store, onOpen, compact = false }) {
   );
 }
 
-function Directory({ stores, platformVisitors, onOpen, onCreate, onLogin, onSuperAdmin }) {
+function Directory({ stores, platformVisitors, onOpen, onCreate, onLogin }) {
   const [openFaq, setOpenFaq] = useState(0);
   const [testiIndex, setTestiIndex] = useState(0);
   const [templateCategory, setTemplateCategory] = useState("All");
@@ -2302,7 +2310,6 @@ function Directory({ stores, platformVisitors, onOpen, onCreate, onLogin, onSupe
 
           <div style={{ marginTop: 36, paddingTop: 20, borderTop: `1px solid ${DK.cardBorder}`, display: "flex", justifyContent: "space-between", flexWrap: "wrap", gap: 10 }}>
             <span style={{ color: DK.muted, fontSize: 12 }}>© {new Date().getFullYear()} Apna Mini Store. All rights reserved.</span>
-            <button onClick={onSuperAdmin} aria-label="Super Admin login" style={{ color: DK.muted, fontSize: 12, opacity: 0.4, cursor: "pointer", background: "transparent", border: "none", padding: "4px 0", minHeight: 32 }}>Super Admin</button>
           </div>
         </div>
       </div>
