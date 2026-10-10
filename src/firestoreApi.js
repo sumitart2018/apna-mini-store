@@ -162,6 +162,16 @@ export async function writeAdminAuditLog(action, adminEmail, storeId = "", detai
     createdAt: serverTimestamp(),
   });
 }
+export async function createAnnouncement({ title, message, kind = "info" }, adminEmail) {
+  await addDoc(collection(db, "announcements"), {
+    title,
+    message,
+    kind,
+    audience: "all-sellers",
+    adminEmail,
+    createdAt: serverTimestamp(),
+  });
+}
 
 // ---------- Real-time listeners ----------
 // Each returns an unsubscribe function — call it in a useEffect cleanup.
@@ -246,6 +256,14 @@ export function watchAdminAuditLogs(onChange, onError) {
     query(collection(db, "auditLogs"), fsOrderBy("createdAt", "desc"), fsLimit(100)),
     (snap) => onChange(snap.docs.map((d) => ({ id: d.id, ...d.data() }))),
     (err) => { console.error("watchAdminAuditLogs failed:", err); if (onError) onError(err); }
+  );
+}
+
+export function watchAnnouncements(onChange, onError) {
+  return onSnapshot(
+    query(collection(db, "announcements"), fsOrderBy("createdAt", "desc"), fsLimit(20)),
+    (snap) => onChange(snap.docs.map((d) => ({ id: d.id, ...d.data() }))),
+    (err) => { console.error("watchAnnouncements failed:", err); if (onError) onError(err); }
   );
 }
 

@@ -194,6 +194,26 @@ service cloud.firestore {
       allow read: if isSuperAdmin();
     }
 
+    // Platform-wide announcements are visible only to authenticated users.
+    // Sellers can read them, but only the Super Admin can broadcast a message.
+    match /announcements/{announcementId} {
+      allow read: if request.auth != null;
+      allow create: if isSuperAdmin()
+        && request.resource.data.keys().hasOnly([
+          "title", "message", "kind", "audience", "adminEmail", "createdAt"
+        ])
+        && request.resource.data.title is string
+        && request.resource.data.title.size() > 0
+        && request.resource.data.title.size() <= 100
+        && request.resource.data.message is string
+        && request.resource.data.message.size() > 0
+        && request.resource.data.message.size() <= 800
+        && request.resource.data.kind in ["info", "important", "update"]
+        && request.resource.data.audience == "all-sellers"
+        && request.resource.data.adminEmail == request.auth.token.email;
+      allow update, delete: if isSuperAdmin();
+    }
+
     // Immutable administrative history. It records actions, never passwords
     // or payment secrets.
     match /auditLogs/{logId} {

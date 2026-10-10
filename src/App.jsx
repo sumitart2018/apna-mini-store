@@ -1,10 +1,10 @@
 import React, { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { ShoppingCart, MessageCircle, Palette, Package, QrCode, BarChart3, ShieldCheck, Smartphone, Users, Boxes, Search, Zap, Menu, X, Facebook, Instagram, Youtube, Heart, Truck, Headphones, User, Phone, MapPin, FileText, Mail, Twitter, ShoppingBag, Shirt, Coffee, KeyRound, Grid3x3, Share2, SlidersHorizontal, Home, Award, Star, ExternalLink, Globe, UtensilsCrossed, Moon, Sun, Sparkles, TrendingUp, Flame, Bell, LogOut, Filter, ArrowUpDown, ChevronLeft, ChevronRight, Store, Ban, CalendarDays, Clock, Hash, TrendingDown, Copy, Lock, Eye, EyeOff, Loader2, Download, CheckCircle2, ClipboardList, Receipt, Activity } from "lucide-react";
 import {
-  watchAllStores, watchAllProducts, watchOrdersForStore, watchAllOrders, watchAllStoreAnalytics, watchAdminAuditLogs, watchPlatformAnalytics, watchStoreAnalytics, watchAuthState,
+  watchAllStores, watchAllProducts, watchOrdersForStore, watchAllOrders, watchAllStoreAnalytics, watchAdminAuditLogs, watchAnnouncements, watchPlatformAnalytics, watchStoreAnalytics, watchAuthState,
   signUpSeller, signInSeller, signOutUser, friendlyAuthError,
   updateStoreProfile, addStoreCategory, removeStoreCategory,
-  setStorePlan, setStoreBlocked, setTrialStartedAt, setStoreApproval, setPaymentVerification, writeAdminAuditLog,
+  setStorePlan, setStoreBlocked, setTrialStartedAt, setStoreApproval, setPaymentVerification, writeAdminAuditLog, createAnnouncement,
   createProduct, editProduct, removeProduct,
   createOrder, setOrderStatus, setOrderPaymentStatus, uploadStoreImage, resetSellerPassword, signInWithGoogle,
   trackPlatformVisit, trackStoreVisit, trackStoreAnalytics, watchReviewsForStore, watchApprovedReviews,
@@ -541,6 +541,7 @@ export default function App() {
   const [adminOrders, setAdminOrders] = useState([]);
   const [adminAnalyticsByStore, setAdminAnalyticsByStore] = useState({});
   const [adminAuditLogs, setAdminAuditLogs] = useState([]);
+  const [announcements, setAnnouncements] = useState([]);
   const [reviewsByStore, setReviewsByStore] = useState({});
   const [platformVisitors, setPlatformVisitors] = useState(0);
   // undefined = auth state not yet resolved, null = logged out, object = logged in
@@ -627,13 +628,15 @@ export default function App() {
       setAdminOrders([]);
       setAdminAnalyticsByStore({});
       setAdminAuditLogs([]);
+      setAnnouncements([]);
       return;
     }
+    const unsubAnnouncements = watchAnnouncements(setAnnouncements, (err) => console.warn("Announcements load nahi hue:", err));
     if (isSuperAdmin) {
       const unsubAdminOrders = watchAllOrders(setAdminOrders, (err) => console.warn("Global orders load nahi hue:", err));
       const unsubAdminAnalytics = watchAllStoreAnalytics(setAdminAnalyticsByStore, (err) => console.warn("Global analytics load nahi hua:", err));
       const unsubAuditLogs = watchAdminAuditLogs(setAdminAuditLogs, (err) => console.warn("Audit logs load nahi hue:", err));
-      return () => { unsubAdminOrders(); unsubAdminAnalytics(); unsubAuditLogs(); };
+      return () => { unsubAnnouncements(); unsubAdminOrders(); unsubAdminAnalytics(); unsubAuditLogs(); };
     }
     const unsubOrders = watchOrdersForStore(authUser.uid, (orders) => {
       setOrdersByStore({ [authUser.uid]: orders });
@@ -644,7 +647,7 @@ export default function App() {
     const unsubAnalytics = watchStoreAnalytics(authUser.uid, (analytics) => {
       setAnalyticsByStore({ [authUser.uid]: analytics });
     }, (err) => { console.warn("Analytics load nahi hua:", err); });
-    return () => { unsubOrders(); unsubReviews(); unsubAnalytics(); };
+    return () => { unsubAnnouncements(); unsubOrders(); unsubReviews(); unsubAnalytics(); };
   }, [authUser, isSuperAdmin]);
 
   // On first load, if the browser already has a persisted login, jump
@@ -1076,6 +1079,17 @@ export default function App() {
       flash("Payment verification update nahi hua");
     }
   };
+  const publishAnnouncement = async (payload) => {
+    try {
+      await createAnnouncement(payload, authUser.email);
+      recordAdminAction("broadcast_announcement", "", { title: payload.title, kind: payload.kind, audience: "all-sellers" });
+      flash("Announcement sabhi sellers ko bhej diya gaya");
+      return true;
+    } catch (e) {
+      flash("Announcement publish nahi hua — dobara try karo");
+      return false;
+    }
+  };
   const submitPaymentProof = async (payload) => {
     try {
       await updateStoreProfile(session, {
@@ -1148,10 +1162,10 @@ export default function App() {
 )}
       {view === "superadmin-login" && <SuperAdminLogin onSubmit={superAdminLogin} onBack={() => setView("directory")} />}
       {view === "superadmin" && isSuperAdmin && (
-        <SuperAdminDashboard stores={stores} productsByStore={productsByStore} globalOrders={adminOrders} storeAnalytics={adminAnalyticsByStore} auditLogs={adminAuditLogs} platformVisitors={platformVisitors} onActivate={activatePlan} onBlock={toggleBlockStore} onExtendTrial={extendTrial} onApprove={updateStoreApproval} onVerifyPayment={updatePaymentVerification} onLogout={() => { signOutUser(); setView("directory"); }} onResetPassword={sendResetEmail} />
+        <SuperAdminDashboard stores={stores} productsByStore={productsByStore} globalOrders={adminOrders} storeAnalytics={adminAnalyticsByStore} auditLogs={adminAuditLogs} announcements={announcements} platformVisitors={platformVisitors} onActivate={activatePlan} onBlock={toggleBlockStore} onExtendTrial={extendTrial} onApprove={updateStoreApproval} onVerifyPayment={updatePaymentVerification} onPublishAnnouncement={publishAnnouncement} onLogout={() => { signOutUser(); setView("directory"); }} onResetPassword={sendResetEmail} />
       )}
       {view === "dashboard" && ownerStore && (
-        <Dashboard store={ownerStore} storeAnalytics={analyticsByStore[ownerStore.id] || {}} onAddProduct={addProduct} onUpdateProduct={updateProduct} onDeleteProduct={deleteProduct} onAddCategory={addCategory} onDeleteCategory={deleteCategory} onUpdateStore={updateOwnerStore} onSubmitPayment={submitPaymentProof} onViewStore={() => openStore(ownerStore.id)} onUpdateOrderStatus={updateOrderStatus} onUpdateOrderPaymentStatus={updateOrderPaymentStatus} onUpdateReviewStatus={updateReviewStatus} onDeleteReview={removeReview} saveState={saveState} />
+        <Dashboard store={ownerStore} storeAnalytics={analyticsByStore[ownerStore.id] || {}} announcements={announcements} onAddProduct={addProduct} onUpdateProduct={updateProduct} onDeleteProduct={deleteProduct} onAddCategory={addCategory} onDeleteCategory={deleteCategory} onUpdateStore={updateOwnerStore} onSubmitPayment={submitPaymentProof} onViewStore={() => openStore(ownerStore.id)} onUpdateOrderStatus={updateOrderStatus} onUpdateOrderPaymentStatus={updateOrderPaymentStatus} onUpdateReviewStatus={updateReviewStatus} onDeleteReview={removeReview} saveState={saveState} />
       )}
       {view === "storefront" && activeStore && (
         <Storefront store={activeStore} cart={cart} wishlist={wishlist} onBack={() => {
@@ -2300,6 +2314,39 @@ function SellerOnboardingChecklist({ store, onOpenTab }) {
   );
 }
 
+function SellerAnnouncements({ announcements = [] }) {
+  if (!announcements.length) return null;
+  const tone = {
+    important: { background: "#FFF7ED", border: "#FDBA74", color: "#9A3412", icon: "⚠️" },
+    update: { background: "#EFF6FF", border: "#93C5FD", color: "#1D4ED8", icon: "✨" },
+    info: { background: "#ECFDF5", border: "#A7F3D0", color: "#047857", icon: "📣" },
+  };
+  return (
+    <section aria-labelledby="seller-announcements-title" aria-live="polite" style={{ marginBottom: 20 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 9 }}>
+        <Bell size={16} color={T.mint} />
+        <h2 id="seller-announcements-title" style={{ margin: 0, color: T.ink, fontSize: 15, fontWeight: 800 }}>Platform Announcements</h2>
+      </div>
+      <div style={{ display: "grid", gap: 9 }}>
+        {announcements.slice(0, 3).map((announcement) => {
+          const style = tone[announcement.kind] || tone.info;
+          return (
+            <article key={announcement.id} style={{ background: style.background, border: `1px solid ${style.border}`, borderRadius: 11, padding: "12px 14px" }}>
+              <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12 }}>
+                <div style={{ minWidth: 0 }}>
+                  <div style={{ color: style.color, fontSize: 13, fontWeight: 800 }}>{style.icon} {announcement.title}</div>
+                  <p style={{ color: T.ink, fontSize: 12.5, lineHeight: 1.5, margin: "5px 0 0", whiteSpace: "pre-wrap" }}>{announcement.message}</p>
+                </div>
+                <time dateTime={announcement.createdAt?.toDate ? announcement.createdAt.toDate().toISOString() : undefined} style={{ color: style.color, fontSize: 10.5, whiteSpace: "nowrap" }}>{formatAdminDate(announcement.createdAt)}</time>
+              </div>
+            </article>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
 function AdvancedAnalyticsPanel({ metrics }) {
   const funnel = [
     { label: "Store views", value: metrics.views, color: T.mint },
@@ -2366,7 +2413,7 @@ function AdvancedAnalyticsPanel({ metrics }) {
   );
 }
 
-function Dashboard({ store, storeAnalytics = {}, onAddProduct, onUpdateProduct, onDeleteProduct, onAddCategory, onDeleteCategory, onUpdateStore, onSubmitPayment, onViewStore, onUpdateOrderStatus, onUpdateOrderPaymentStatus, onUpdateReviewStatus, onDeleteReview, saveState }) {
+function Dashboard({ store, storeAnalytics = {}, announcements = [], onAddProduct, onUpdateProduct, onDeleteProduct, onAddCategory, onDeleteCategory, onUpdateStore, onSubmitPayment, onViewStore, onUpdateOrderStatus, onUpdateOrderPaymentStatus, onUpdateReviewStatus, onDeleteReview, saveState }) {
   const [tab, setTab] = useState("products");
   const orders = store.orders || [];
   const reviews = store.reviews || [];
@@ -2537,6 +2584,8 @@ function Dashboard({ store, storeAnalytics = {}, onAddProduct, onUpdateProduct, 
       </div>
 
       <SellerOnboardingChecklist store={store} onOpenTab={setTab} />
+
+      <SellerAnnouncements announcements={announcements} />
 
       <div style={{ display: "flex", gap: 8, marginBottom: 20, flexWrap: "wrap" }}>
         {["products", "categories", "orders", "analytics", "reviews", "billing", "profile", "settings"].map((t) => (
@@ -4566,7 +4615,57 @@ function AdminAuditLogPanel({ logs }) {
   );
 }
 
-function SuperAdminDashboard({ stores, productsByStore = {}, globalOrders = [], storeAnalytics = {}, auditLogs = [], platformVisitors, onActivate, onBlock, onExtendTrial, onApprove, onVerifyPayment, onLogout, onResetPassword }) {
+function BroadcastNotificationsPanel({ announcements = [], onPublish }) {
+  const [title, setTitle] = useState("");
+  const [message, setMessage] = useState("");
+  const [kind, setKind] = useState("info");
+  const [error, setError] = useState("");
+  const [publishing, setPublishing] = useState(false);
+
+  const submit = async (event) => {
+    event.preventDefault();
+    if (!title.trim() || !message.trim()) {
+      setError("Title aur message dono bharna zaroori hai");
+      return;
+    }
+    setError("");
+    setPublishing(true);
+    try {
+      const published = await onPublish({ title: title.trim(), message: message.trim(), kind });
+      if (published) {
+        setTitle("");
+        setMessage("");
+        setKind("info");
+      }
+    } finally {
+      setPublishing(false);
+    }
+  };
+
+  return (
+    <section aria-labelledby="broadcast-notifications-title" style={{ background: T.cream, border: `1px solid ${T.border}`, borderRadius: 14, padding: 18 }}>
+      <div style={{ display: "flex", alignItems: "flex-start", gap: 10, marginBottom: 16 }}>
+        <div style={{ width: 38, height: 38, borderRadius: 10, background: `${T.mint}12`, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}><Bell size={18} color={T.mint} /></div>
+        <div><h2 id="broadcast-notifications-title" style={{ margin: 0, fontFamily: "Inter", fontSize: 19, color: T.ink }}>📣 Broadcast Notifications</h2><p style={{ margin: "4px 0 0", color: T.muted, fontSize: 12 }}>Ek announcement publish karo aur sabhi sellers ke dashboard mein dikhao.</p></div>
+      </div>
+      <form onSubmit={submit} style={{ background: T.paper, border: `1px solid ${T.border}`, borderRadius: 11, padding: 14 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) 170px", gap: 10 }}>
+          <label style={{ display: "block" }}><span style={{ display: "block", color: T.muted, fontSize: 11, fontWeight: 700, marginBottom: 5 }}>Title</span><input value={title} onChange={(event) => setTitle(event.target.value)} maxLength={100} placeholder="Jaise: New payment update" style={{ width: "100%", minHeight: 42, padding: "0 12px", borderRadius: 8, border: `1px solid ${T.border}`, fontFamily: "Inter", boxSizing: "border-box" }} /></label>
+          <label style={{ display: "block" }}><span style={{ display: "block", color: T.muted, fontSize: 11, fontWeight: 700, marginBottom: 5 }}>Type</span><select value={kind} onChange={(event) => setKind(event.target.value)} style={{ width: "100%", minHeight: 42, padding: "0 10px", borderRadius: 8, border: `1px solid ${T.border}`, fontFamily: "Inter", background: "#fff" }}><option value="info">Information</option><option value="important">Important</option><option value="update">Product Update</option></select></label>
+        </div>
+        <label style={{ display: "block", marginTop: 10 }}><span style={{ display: "block", color: T.muted, fontSize: 11, fontWeight: 700, marginBottom: 5 }}>Message</span><textarea value={message} onChange={(event) => setMessage(event.target.value)} maxLength={800} rows={4} placeholder="Sellers ko kya batana hai?" style={{ width: "100%", resize: "vertical", padding: "10px 12px", borderRadius: 8, border: `1px solid ${T.border}`, fontFamily: "Inter", fontSize: 13, boxSizing: "border-box" }} /></label>
+        {error && <div role="alert" style={{ color: "#B91C1C", background: "#FEF2F2", borderRadius: 8, padding: 9, fontSize: 12, marginTop: 10 }}>{error}</div>}
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flexWrap: "wrap", marginTop: 12 }}><span style={{ color: T.muted, fontSize: 11 }}>Ye message sabhi authenticated sellers ko milega.</span><Button type="submit" variant="mint" disabled={publishing}>{publishing ? "Publishing..." : "📣 Broadcast Publish Karo"}</Button></div>
+      </form>
+      <div style={{ marginTop: 20, borderTop: `1px solid ${T.border}`, paddingTop: 14 }}>
+        <div style={{ color: T.ink, fontSize: 14, fontWeight: 800, marginBottom: 10 }}>Recent broadcasts</div>
+        {announcements.length === 0 ? <div style={{ color: T.muted, background: T.paper, borderRadius: 10, padding: 18, fontSize: 12 }}>Abhi koi announcement publish nahi hua.</div> : <div style={{ display: "grid", gap: 8 }}>{announcements.slice(0, 10).map((announcement) => <div key={announcement.id} style={{ background: T.paper, border: `1px solid ${T.border}`, borderRadius: 9, padding: "10px 12px" }}><div style={{ display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}><strong style={{ color: T.ink, fontSize: 13 }}>{announcement.title}</strong><time style={{ color: T.muted, fontSize: 10.5 }}>{formatAdminDate(announcement.createdAt)}</time></div><div style={{ color: T.muted, fontSize: 12, lineHeight: 1.45, marginTop: 4, whiteSpace: "pre-wrap" }}>{announcement.message}</div></div>)}</div>}
+      </div>
+    </section>
+  );
+}
+
+function SuperAdminDashboard({ stores, productsByStore = {}, globalOrders = [], storeAnalytics = {}, auditLogs = [], announcements = [], platformVisitors, onActivate, onBlock, onExtendTrial, onApprove, onVerifyPayment, onPublishAnnouncement, onLogout, onResetPassword }) {
   const [activeTab, setActiveTab] = useState("overview");
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
@@ -4665,6 +4764,7 @@ function SuperAdminDashboard({ stores, productsByStore = {}, globalOrders = [], 
         <AdminTabButton active={activeTab === "approvals"} label="Store Approval" count={pendingApprovals} onClick={() => setActiveTab("approvals")} />
         <AdminTabButton active={activeTab === "payments"} label="Payments" count={pendingPayments} onClick={() => setActiveTab("payments")} />
         <AdminTabButton active={activeTab === "audit"} label="Audit Logs" onClick={() => setActiveTab("audit")} />
+        <AdminTabButton active={activeTab === "broadcast"} label="Broadcast Notifications" onClick={() => setActiveTab("broadcast")} />
       </div>
 
       <div style={{ maxWidth: 1180, margin: "0 auto", padding: "24px 20px 80px" }}>
@@ -4673,6 +4773,7 @@ function SuperAdminDashboard({ stores, productsByStore = {}, globalOrders = [], 
           {activeTab === "approvals" && <StoreApprovalPanel stores={enriched} onApprove={onApprove} />}
           {activeTab === "payments" && <PaymentVerificationPanel stores={enriched} onVerify={onVerifyPayment} />}
           {activeTab === "audit" && <AdminAuditLogPanel logs={auditLogs} />}
+          {activeTab === "broadcast" && <BroadcastNotificationsPanel announcements={announcements} onPublish={onPublishAnnouncement} />}
         </div>}
         {activeTab === "overview" && <div>
         <div className="sads-admin-stats" style={{ marginBottom: 28 }}>
